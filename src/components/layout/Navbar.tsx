@@ -19,6 +19,7 @@ const defaultLinks: NavLink[] = [
   { href: "#technology", label: "Technology" },
   { href: "#impact", label: "Impact" },
   { href: "#roadmap", label: "Roadmap" },
+  { href: "/emergency", label: "Emergency" },
 ];
 
 const ngoLinks: NavLink[] = [
@@ -60,6 +61,7 @@ export default function Navbar() {
 
   // Re-fetch user on mount and when pathname changes
   const pathname = usePathname();
+  const isEmergencyRoute = pathname === "/emergency" || pathname.startsWith("/emergency/");
   useEffect(() => {
     async function getUser() {
       const { data: { user } } = await supabase.auth.getUser();
@@ -90,6 +92,8 @@ export default function Navbar() {
     );
 
     defaultLinks.forEach((link) => {
+      if (!link.href.startsWith("#")) return;
+
       const el = document.querySelector(link.href);
       if (el) observer.observe(el);
     });
@@ -126,8 +130,9 @@ export default function Navbar() {
             {/* Desktop Nav */}
             <div className="hidden md:flex items-center gap-0">
               {navLinks.map((link) => {
-                const isActive = activeSection === link.href;
+                const isActive = activeSection === link.href || (link.href === "/emergency" && isEmergencyRoute);
                 const isHovered = hoveredLink === link.href;
+                const isEmergencyLink = link.href === "/emergency";
                 
                 return (
                   <Link
@@ -136,15 +141,21 @@ export default function Navbar() {
                     onMouseEnter={() => setHoveredLink(link.href)}
                     onMouseLeave={() => setHoveredLink(null)}
                     className={`relative px-4 py-2 text-[13px] font-medium transition-colors duration-300 flex items-center gap-1.5 ${
-                      isActive ? "text-foreground" : "text-accent-dim hover:text-foreground"
+                      isEmergencyLink && isActive
+                        ? "text-red-100 bg-red-500 border border-red-500/20 rounded-full shadow-[0_0_0_1px_rgba(239,68,68,0.12)]"
+                        : isActive
+                          ? "text-foreground"
+                          : isEmergencyLink
+                            ? "text-red-300 hover:text-red-200 hover:bg-red-500/10 rounded-full"
+                            : "text-accent-dim hover:text-foreground"
                     }`}
                   >
-                    {link.icon && <link.icon size={14} className={isActive ? "text-foreground" : "text-accent-dim"} />}
+                    {link.icon && <link.icon size={14} className={isEmergencyLink ? (isActive ? "text-red" : "text-red") : isActive ? "text-foreground" : "text-accent"} />}
                     {link.label}
                     {(isActive || isHovered) && (
                       <motion.div
                         layoutId="navUnderline"
-                        className="absolute -bottom-0.5 left-1/2 -translate-x-1/2 h-[2px] w-4 bg-foreground rounded-full"
+                        className={`absolute -bottom-0.5 left-1/2 -translate-x-1/2 h-[2px] w-4 rounded-full ${isEmergencyLink ? "bg-red" : "bg-foreground"}`}
                         transition={{ type: "spring", stiffness: 400, damping: 30 }}
                       />
                     )}
@@ -295,9 +306,13 @@ export default function Navbar() {
                     <Link
                       href={link.href}
                       className={`flex items-center gap-2 px-3 py-2.5 rounded-lg text-[15px] font-medium transition-colors ${
-                        activeSection === link.href
-                          ? "text-foreground bg-foreground/[0.05]"
-                          : "text-accent-muted hover:text-foreground hover:bg-foreground/[0.03]"
+                          (link.href === "/emergency" && isEmergencyRoute)
+                            ? "text-red-200 bg-red-500/10 border border-red-500/20"
+                            : activeSection === link.href
+                              ? "text-foreground bg-foreground/[0.05]"
+                              : link.href === "/emergency"
+                                ? "text-red-300 hover:text-red-200 hover:bg-red-500/10"
+                                : "text-accent-muted hover:text-foreground hover:bg-foreground/[0.03]"
                       }`}
                       onClick={() => setIsMobileMenuOpen(false)}
                     >

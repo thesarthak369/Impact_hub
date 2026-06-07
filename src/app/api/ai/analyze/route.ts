@@ -12,13 +12,15 @@ const adminSupabase = createAdminClient(
 
 export async function POST(req: Request) {
   try {
-    const { text } = await req.json();
+    const { text, reporter_name, reporter_mobile } = await req.json();
     if (!text || typeof text !== "string") {
       return NextResponse.json({ error: "Missing 'text' field" }, { status: 400 });
     }
 
     const supabase = await createClient();
     const { data: { user } } = await supabase.auth.getUser();
+    const reporterName = typeof reporter_name === "string" && reporter_name.trim() ? reporter_name.trim() : user?.user_metadata?.full_name || user?.email || "Anonymous";
+    const reporterMobile = typeof reporter_mobile === "string" ? reporter_mobile.trim() : "";
 
     try {
       let model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
@@ -65,15 +67,15 @@ Return ONLY valid JSON (no markdown, no code fences) with these fields:
         }, { status: 400 });
       }
 
-      // Get NGO name for display
-      let ngoName = "Unknown NGO";
+      // Get reporter name for display
+      let ngoName = reporterName;
       if (user) {
         const { data: profile } = await supabase.from('profiles').select('metadata').eq('id', user.id).single();
-        ngoName = profile?.metadata?.full_name || profile?.metadata?.orgName || user.user_metadata?.full_name || "Unknown NGO";
+        ngoName = profile?.metadata?.full_name || profile?.metadata?.orgName || user.user_metadata?.full_name || reporterName;
       }
 
       // Save to Supabase Incidents
-      const { data: incident, error: insertError } = await supabase
+      const { data: incident, error: insertError } = await adminSupabase
         .from('incidents')
         .insert({
           location: parsed.location || "Unknown Location",
@@ -81,26 +83,92 @@ Return ONLY valid JSON (no markdown, no code fences) with these fields:
           priority: parsed.priority || "NORMAL",
           status: "Active",
           affected: parsed.affected_count || "Unknown",
-          description: parsed.summary || "",
+          description: [
+            parsed.summary || "",
+            `Emergency user: ${reporterName}`,
+            reporterMobile ? `Phone: ${reporterMobile}` : "",
+            `Posted at: ${new Date().toISOString()}`
+          ].filter(Boolean).join(" | "),
           volunteers_needed: parseInt(parsed.volunteers_needed) || 0,
           created_by: user?.id || null
         })
         .select()
         .single();
 
+      const emergencySubmissionPayload = {
+        source: "text",
+        input_text: text,
+        reporter_name: reporterName,
+        reporter_mobile: reporterMobile,
+        submitted_at: new Date().toISOString(),
+        parsed,
+        incident_id: incident?.id || null,
+        created_by: user?.id || null,
+      };
+
+      const { error: submissionError } = await adminSupabase
+        .from('emergency_submissions')
+        .insert({
+          incident_id: incident?.id || null,
+          submitted_by_user_id: user?.id || null,
+          reporter_name: reporterName,
+          reporter_mobile: reporterMobile,
+          report_mode: "text",
+          location: parsed.location || "Unknown Location",
+          details: [
+            parsed.summary || "",
+            `Emergency user: ${reporterName}`,
+            reporterMobile ? `Phone: ${reporterMobile}` : "",
+            `Posted at: ${new Date().toISOString()}`,
+          ].filter(Boolean).join(" | "),
+          priority: parsed.priority || "NORMAL",
+          category: parsed.category || "General",
+          status: "Active",
+          posted_at: new Date().toISOString(),
+          payload: emergencySubmissionPayload,
+        });
+
       if (insertError) {
         console.error("Error inserting incident:", insertError);
+      }
+
+      if (submissionError) {
+        console.error("Error inserting emergency submission:", submissionError);
       }
 
       // Save NLP extraction
       if (user) {
         const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single();
-        await supabase.from('nlp_extractions').insert({
+        await adminSupabase.from('nlp_extractions').insert({
           user_id: user.id,
           role_tag: profile?.role || null,
           raw_text: text,
           extracted_data: parsed
         });
+      }
+
+      // Broadcast the emergency to all responders first.
+      if (incident) {
+        try {
+          const { data: responderProfiles } = await adminSupabase
+            .from('profiles')
+            .select('id, role')
+            .in('role', ['volunteer', 'ngo']);
+
+          const emergencyNotifications = (responderProfiles || []).map((profile: any) => ({
+            user_id: profile.id,
+            type: "alert" as const,
+            title: `🚨 EMERGENCY: ${parsed.category || "General"} in ${parsed.location}`,
+            body: `${ngoName} reported a ${parsed.priority || "HIGH"} emergency. ${parsed.summary || parsed.recommended_action || "Immediate response required."}${reporterMobile ? ` Contact: ${reporterMobile}` : ""}`,
+            read: false
+          }));
+
+          if (emergencyNotifications.length > 0) {
+            await adminSupabase.from('notifications').insert(emergencyNotifications);
+          }
+        } catch (broadcastErr) {
+          console.error("Emergency broadcast failed (non-critical):", broadcastErr);
+        }
       }
 
       // === AUTO-MATCH: Find volunteers and send notifications ===
@@ -148,7 +216,7 @@ Only include volunteers with score >= 50. Use the EXACT id values provided.`;
                   user_id: m.id,
                   type: "ai" as const,
                   title: `🧠 AI Match: ${parsed.category} in ${parsed.location}`,
-                  body: `${ngoName} reported a ${parsed.priority} incident. AI matched you (score: ${m.score}/100). ${m.reason}. Tap to review and accept.`,
+                  body: `${ngoName} reported a ${parsed.priority} incident. AI matched you (score: ${m.score}/100). ${m.reason}. Tap to review and accept.${reporterMobile ? ` Contact: ${reporterMobile}` : ""}`,
                   read: false
                 }));
 

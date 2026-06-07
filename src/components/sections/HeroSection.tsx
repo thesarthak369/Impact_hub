@@ -150,8 +150,15 @@ export default function HeroSection() {
           className="flex flex-col sm:flex-row gap-4 w-full sm:w-auto justify-center"
         >
           <MagneticButton>
+            <Link href="/emergency" className="group h-12 px-7 rounded-full border border-red-500/40 bg-red-600 text-white shadow-[0_0_24px_rgba(239,68,68,0.35)] font-semibold text-sm flex items-center justify-center gap-2 transition-all duration-300 hover:bg-red-500 hover:shadow-[0_0_30px_rgba(239,68,68,0.45)] active:scale-[0.97] w-full sm:w-auto">
+              Emergency
+              <ArrowRight size={15} className="group-hover:translate-x-0.5 transition-transform duration-300" />
+            </Link>
+          </MagneticButton>
+
+          <MagneticButton>
             <Link href="/login" className="group h-12 px-7 rounded-full border border-foreground/25 text-foreground font-medium text-sm flex items-center justify-center gap-2 transition-all duration-300 hover:bg-foreground hover:text-background hover:border-foreground active:scale-[0.97] w-full sm:w-auto">
-             See It In Action
+             See It in Action
               <ArrowRight size={15} className="group-hover:translate-x-0.5 transition-transform duration-300" />
             </Link>
           </MagneticButton>

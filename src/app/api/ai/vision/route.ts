@@ -1,23 +1,25 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { createClient as createAdminClient } from "@supabase/supabase-js";
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "");
+const adminSupabase = createAdminClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL || "",
+  process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ""
+);
 
 export async function POST(req: Request) {
   try {
     const supabase = await createClient();
     const { data: { user } } = await supabase.auth.getUser();
 
-    // CRITICAL FIX #1: Auth check
-    if (!user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
     const formData = await req.formData();
     const file = formData.get("image") as File | null;
     const description = formData.get("description") as string | null;
     const location = formData.get("location") as string | null;
+    const reporterName = (formData.get("reporter_name") as string | null)?.trim() || user?.user_metadata?.full_name || user?.email || "Anonymous";
+    const reporterMobile = (formData.get("reporter_mobile") as string | null)?.trim() || "";
 
     if (!file && !description) {
       return NextResponse.json({ error: "Provide an image or description" }, { status: 400 });
@@ -91,7 +93,7 @@ Return ONLY valid JSON (no markdown, no code fences) with these fields:
       const parsed = JSON.parse(cleaned);
 
       // CRITICAL FIX #2: Save with created_by
-      const { data: incident, error: insertError } = await supabase
+      const { data: incident, error: insertError } = await adminSupabase
         .from('incidents')
         .insert({
           location: location.trim(),
@@ -99,15 +101,81 @@ Return ONLY valid JSON (no markdown, no code fences) with these fields:
           priority: parsed.severity === "MEDIUM" ? "HIGH" : parsed.severity === "LOW" ? "NORMAL" : parsed.severity || "HIGH",
           status: "Active",
           affected: parsed.estimated_affected_area || "Unknown",
-          description: parsed.description || "",
+          description: [
+            parsed.description || "",
+            `Emergency user: ${reporterName}`,
+            reporterMobile ? `Phone: ${reporterMobile}` : "",
+            `Posted at: ${new Date().toISOString()}`
+          ].filter(Boolean).join(" | "),
           volunteers_needed: parseInt(parsed.volunteers_needed) || 0,
-          created_by: user.id
+          created_by: user?.id || null
         })
         .select()
         .single();
 
+      const emergencySubmissionPayload = {
+        source: "image",
+        has_file: Boolean(file),
+        location: location.trim(),
+        reporter_name: reporterName,
+        reporter_mobile: reporterMobile,
+        submitted_at: new Date().toISOString(),
+        parsed,
+        incident_id: incident?.id || null,
+        created_by: user?.id || null,
+      };
+
+      const { error: submissionError } = await adminSupabase
+        .from('emergency_submissions')
+        .insert({
+          incident_id: incident?.id || null,
+          submitted_by_user_id: user?.id || null,
+          reporter_name: reporterName,
+          reporter_mobile: reporterMobile,
+          report_mode: "image",
+          location: location.trim(),
+          details: [
+            parsed.description || "",
+            `Emergency user: ${reporterName}`,
+            reporterMobile ? `Phone: ${reporterMobile}` : "",
+            `Posted at: ${new Date().toISOString()}`,
+          ].filter(Boolean).join(" | "),
+          priority: parsed.severity === "MEDIUM" ? "HIGH" : parsed.severity === "LOW" ? "NORMAL" : parsed.severity || "HIGH",
+          category: parsed.damage_type || "Vision Assessment",
+          status: "Active",
+          posted_at: new Date().toISOString(),
+          payload: emergencySubmissionPayload,
+        });
+
       if (insertError) {
         console.error("Error inserting incident into Supabase:", insertError);
+      }
+
+      if (submissionError) {
+        console.error("Error inserting emergency submission:", submissionError);
+      }
+
+      if (incident) {
+        try {
+          const { data: responderProfiles } = await supabase
+            .from('profiles')
+            .select('id, role')
+            .in('role', ['volunteer', 'ngo']);
+
+          const emergencyNotifications = (responderProfiles || []).map((profile: any) => ({
+            user_id: profile.id,
+            type: "alert" as const,
+            title: `🚨 EMERGENCY: ${parsed.damage_type || "Visual incident"} in ${location.trim()}`,
+            body: `An emergency image report was submitted by ${reporterName} with ${parsed.severity || "HIGH"} severity. ${parsed.description || "Immediate attention required."}${reporterMobile ? ` Contact: ${reporterMobile}` : ""}`,
+            read: false
+          }));
+
+          if (emergencyNotifications.length > 0) {
+            await supabase.from('notifications').insert(emergencyNotifications);
+          }
+        } catch (broadcastErr) {
+          console.error("Emergency image broadcast failed (non-critical):", broadcastErr);
+        }
       }
 
       return NextResponse.json({ 
