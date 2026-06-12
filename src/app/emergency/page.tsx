@@ -39,9 +39,9 @@ type VerificationResult = {
 } | null;
 
 const modeConfig: Record<ReportMode, { label: string; icon: any; hint: string }> = {
-  text: { label: "Text", icon: FileText, hint: "Type a quick field note or full incident summary." },
-  voice: { label: "Voice", icon: Mic, hint: "Dictate the problem and let the browser transcribe it." },
-  image: { label: "Image", icon: Camera, hint: "Upload a photo so AI can assess the situation visually." },
+  text: { label: "Text", icon: FileText, hint: "Type incident details" },
+  voice: { label: "Voice", icon: Mic, hint: "Dictate the problem" },
+  image: { label: "Image", icon: Camera, hint: "Upload an image" },
 };
 
 const priorityStyles: Record<string, string> = {
@@ -331,44 +331,15 @@ export default function EmergencyPage() {
             className="rounded-[2rem] border border-slate-700/70 bg-slate-950/70 p-6 shadow-[0_24px_80px_rgba(15,23,42,0.45)] backdrop-blur-2xl sm:p-8"
           >
             <div className="space-y-4 max-w-2xl">
-              <h1 className="text-4xl font-semibold tracking-tight text-slate-50 md:text-6xl">
-                Report an emergency without sign-in.
+              <h1 className="text-4xl font-semibold tracking-tight text-slate-50 md:text-5xl">
+                Report an Emergency
               </h1>
-              <p className="max-w-xl text-sm leading-7 text-slate-300 md:text-base">
-                Use text, voice, or an image to send a live incident immediately. This view stays focused on reporting and response, with no shared navigation or login gate in the way.
+              <p className="max-w-xl text-sm leading-6 text-slate-400">
+                Send a live incident report immediately. No sign-in required.
               </p>
             </div>
 
-            <div className="mt-8 grid gap-3 sm:grid-cols-3">
-              {[
-                { label: "Broadcast", value: "Volunteers + NGOs", icon: Users },
-                { label: "Mode", value: "Text / Voice / Image", icon: Radio },
-                { label: "Speed", value: "Live incident feed", icon: Clock3 },
-              ].map((item) => (
-                <div key={item.label} className="rounded-2xl border border-slate-700/70 bg-slate-900/60 p-4">
-                  <div className="mb-3 flex items-center justify-between text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-400">
-                    <span>{item.label}</span>
-                    <item.icon size={14} />
-                  </div>
-                  <div className="text-sm font-medium text-slate-100">{item.value}</div>
-                </div>
-              ))}
-            </div>
-
-            <div className="mt-8 grid gap-3 rounded-[1.5rem] border border-slate-700/70 bg-slate-900/40 p-4 sm:grid-cols-3">
-              <div>
-                <p className="text-[11px] uppercase tracking-[0.22em] text-slate-500">Details highlighted</p>
-                <p className="mt-1 text-sm font-medium text-slate-100">Location, description, and evidence appear in the live feed.</p>
-              </div>
-              <div>
-                <p className="text-[11px] uppercase tracking-[0.22em] text-slate-500">Reporter info</p>
-                <p className="mt-1 text-sm font-medium text-slate-100">Name and phone are saved with the emergency submission.</p>
-              </div>
-              <div>
-                <p className="text-[11px] uppercase tracking-[0.22em] text-slate-500">Posting time</p>
-                <p className="mt-1 text-sm font-medium text-slate-100">Timestamp is captured when the report is sent.</p>
-              </div>
-            </div>
+            {/* Main reporting form follows */}
 
             <form onSubmit={handleSubmit} className="mt-8 space-y-6">
               <div className="grid gap-4 md:grid-cols-2">
@@ -433,13 +404,10 @@ export default function EmergencyPage() {
               </div>
 
               <div className="grid gap-4 md:grid-cols-[1.1fr_0.9fr]">
-                <label className="space-y-2">
+                <label className="flex flex-col h-full space-y-2">
                   <div className="flex items-center justify-between gap-3">
                     <span className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-400">Emergency details</span>
                     <span className="text-[10px] text-slate-500">{modeConfig[mode].hint}</span>
-                  </div>
-                  <div className="rounded-2xl border border-slate-700/70 bg-slate-900/50 p-3 text-xs text-slate-300">
-                    Highlight the incident clearly. Mention who needs help, the exact location, and any immediate danger.
                   </div>
                   <textarea
                     value={reportText}
@@ -464,9 +432,6 @@ export default function EmergencyPage() {
                       {isListening ? <MicOff size={16} /> : <Mic size={16} />}
                       {isListening ? "Stop recording" : "Start voice input"}
                     </button>
-                    <p className="text-xs leading-relaxed text-slate-400">
-                      Speech stays in the browser and becomes text for dispatch.
-                    </p>
                   </div>
 
                   <label className="mt-5 block space-y-2">
@@ -479,7 +444,7 @@ export default function EmergencyPage() {
                         className="block w-full text-xs text-slate-300 file:mr-4 file:cursor-pointer file:rounded-lg file:border-0 file:bg-slate-100 file:px-4 file:py-2 file:text-slate-950 file:font-semibold"
                       />
                       <p className="mt-2 flex items-center gap-2 text-xs text-slate-400">
-                        <Upload size={12} /> Attach a photo for visual AI analysis and incident logging.
+                        <Upload size={12} /> Attach a photo
                       </p>
                     </div>
                   </label>
@@ -557,10 +522,6 @@ export default function EmergencyPage() {
                   </>
                 )}
               </button>
-
-              <p className="text-xs leading-relaxed text-slate-400">
-                No sign-in is required here. Reports are sent directly into the live incident feed for responders and stamped with the posting time.
-              </p>
             </form>
           </motion.section>
 
@@ -668,10 +629,8 @@ export default function EmergencyPage() {
                   </div>
                 </div>
               ) : (
-                <div className="space-y-3 text-sm leading-relaxed text-slate-300">
-                  <p>Reports are analyzed by AI instantly. High-confidence reports (&gt;85%) are dispatched directly to all responders.</p>
-                  <p>Low-confidence reports are forwarded to the NGO and Admin review team for human verification before dispatch.</p>
-                  <p>Submit a report to see the AI confidence score here.</p>
+                <div className="text-xs text-slate-400">
+                  <p>AI instantly analyzes reports for auto-dispatch (&gt;85% confidence).</p>
                 </div>
               )}
             </div>

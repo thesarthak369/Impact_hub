@@ -9,8 +9,28 @@ type SimState = "idle" | "transmitting" | "processing" | "dispatched";
 export default function SMSFallbackSection() {
   const [simState, setSimState] = useState<SimState>("idle");
   const [typedJSON, setTypedJSON] = useState("");
+  const [statusBarTime, setStatusBarTime] = useState("9:41");
+  const [chatTime, setChatTime] = useState("Today 9:40 AM");
   
   const fullJSON = `{\n  "location": "Sector 4",\n  "priority": "CRITICAL",\n  "hazard": "Flooding",\n  "resources": ["Boat Rescue"]\n}`;
+
+  // Real-time clock synchronization
+  useEffect(() => {
+    const updateTime = () => {
+      const now = new Date();
+      const hours = now.getHours();
+      const minutes = now.getMinutes().toString().padStart(2, '0');
+      const ampm = hours >= 12 ? 'PM' : 'AM';
+      const displayHours = hours % 12 || 12;
+
+      setStatusBarTime(`${displayHours}:${minutes}`);
+      setChatTime(`Today ${displayHours}:${minutes} ${ampm}`);
+    };
+    
+    updateTime();
+    const interval = setInterval(updateTime, 1000); // Check every second to cross minute boundaries immediately
+    return () => clearInterval(interval);
+  }, []);
 
   const triggerSimulation = () => {
     if (simState !== "idle") return;
@@ -167,36 +187,36 @@ export default function SMSFallbackSection() {
 
               {/* 1. THE SEXY REALISTIC PHONE (LEFT) - Popping out in 3D */}
               <div 
-                className="relative z-20 w-full lg:w-[280px] h-[400px] lg:h-[500px] rounded-[3rem] border-[8px] border-[#1a1a1c] bg-[#000] shadow-[0_30px_60px_rgba(0,0,0,0.6),inset_0_0_0_2px_rgba(255,255,255,0.1)] flex flex-col overflow-hidden shrink-0 ring-1 ring-white/10 group hover:shadow-[0_40px_80px_rgba(0,0,0,0.8)] transition-shadow duration-500"
+                className="relative z-20 w-full lg:w-[280px] h-[400px] lg:h-[500px] rounded-[3rem] border-[8px] border-foreground/[0.08] bg-background shadow-[0_30px_60px_rgba(0,0,0,0.6),inset_0_0_0_2px_var(--glass-highlight)] flex flex-col overflow-hidden shrink-0 ring-1 ring-foreground/10 group hover:shadow-[0_40px_80px_rgba(0,0,0,0.8)] transition-shadow duration-500"
                 style={{ transform: "translateZ(50px)", transformStyle: "preserve-3d" }}
               >
                   {/* Physical Hardware details (Volume/Power buttons) */}
-                  <div className="absolute top-24 -left-2 w-1 h-12 bg-[#1a1a1c] rounded-l-md" />
-                  <div className="absolute top-40 -left-2 w-1 h-12 bg-[#1a1a1c] rounded-l-md" />
-                  <div className="absolute top-32 -right-2 w-1 h-16 bg-[#1a1a1c] rounded-r-md" />
+                  <div className="absolute top-24 -left-2 w-1 h-12 bg-foreground/20 rounded-l-md" />
+                  <div className="absolute top-40 -left-2 w-1 h-12 bg-foreground/20 rounded-l-md" />
+                  <div className="absolute top-32 -right-2 w-1 h-16 bg-foreground/20 rounded-r-md" />
 
                   {/* Glare/Reflection */}
-                  <div className="absolute inset-0 bg-gradient-to-tr from-transparent via-white/[0.02] to-white/[0.05] pointer-events-none z-20" />
+                  <div className="absolute inset-0 bg-gradient-to-tr from-transparent via-foreground/[0.02] to-foreground/[0.05] pointer-events-none z-20" />
 
                   {/* Screen Wallpaper / Background */}
-                  <div className="absolute inset-0 bg-[#09090b] z-0" />
+                  <div className="absolute inset-0 bg-background z-0" />
 
-                  {/* Dynamic Island / Notch Area */}
+                  {/* Dynamic Island / Notch Area (Always Dark) */}
                   <div className="absolute top-0 inset-x-0 h-7 flex justify-center z-20 mt-2 pointer-events-none">
-                      <div className="w-[35%] h-5 bg-black rounded-full flex items-center justify-end px-2 shadow-[0_0_10px_rgba(0,0,0,0.5)]">
-                          <div className="w-1.5 h-1.5 rounded-full bg-[#1a1a24] shadow-[inset_0_1px_1px_rgba(255,255,255,0.1)]" />
+                      <div className="w-[35%] h-5 bg-black rounded-full flex items-center justify-end px-2 shadow-sm">
+                          <div className="w-1.5 h-1.5 rounded-full bg-neutral-800 shadow-[inset_0_1px_1px_rgba(255,255,255,0.1)]" />
                       </div>
                   </div>
 
                   {/* Status Bar */}
-                  <div className="relative z-10 pt-2 px-5 flex items-center justify-between text-[10px] font-medium text-white/70">
-                      <span>9:41</span>
+                  <div className="relative z-10 pt-2 px-5 flex items-center justify-between text-[10px] font-medium text-foreground/70">
+                      <span>{statusBarTime}</span>
                       <div className="flex items-center gap-1.5">
                          <div className="flex gap-0.5 items-end h-2.5">
-                             <div className="w-0.5 h-1 bg-white/20 rounded-sm" />
-                             <div className="w-0.5 h-1.5 bg-white/20 rounded-sm" />
-                             <div className="w-0.5 h-2 bg-white/20 rounded-sm" />
-                             <div className="w-0.5 h-2.5 bg-white/20 rounded-sm" />
+                             <div className="w-0.5 h-1 bg-foreground/30 rounded-sm" />
+                             <div className="w-0.5 h-1.5 bg-foreground/30 rounded-sm" />
+                             <div className="w-0.5 h-2 bg-foreground/30 rounded-sm" />
+                             <div className="w-0.5 h-2.5 bg-foreground/30 rounded-sm" />
                          </div>
                          <div className="font-bold text-red-500 tracking-wider text-[8px] uppercase">No Service</div>
                       </div>
@@ -209,14 +229,14 @@ export default function SMSFallbackSection() {
                             initial={{ opacity: 0, scale: 0.9 }}
                             animate={{ opacity: 1, scale: 1 }}
                             exit={{ opacity: 0 }}
-                            className="absolute z-50 top-24 left-1/2 -translate-x-1/2 w-[90%] bg-[#1a1a1c]/95 backdrop-blur-xl border border-white/10 rounded-2xl p-4 shadow-2xl"
+                            className="absolute z-50 top-24 left-1/2 -translate-x-1/2 w-[90%] bg-background/95 backdrop-blur-xl border border-foreground/10 rounded-2xl p-4 shadow-2xl"
                         >
                             <div className="flex items-start gap-3">
-                                <div className="mt-0.5 text-blue-400"><Navigation size={18} fill="currentColor" /></div>
+                                <div className="mt-0.5 text-blue-500"><Navigation size={18} fill="currentColor" /></div>
                                 <div className="flex-1">
-                                    <div className="text-white text-[11px] font-bold mb-1.5 tracking-wide uppercase">System Offline</div>
-                                    <div className="text-white/70 text-[11px] leading-relaxed">
-                                        To request help offline, SMS your status to <span className="text-white font-bold bg-white/10 px-1 py-0.5 rounded">08604227760</span> starting with <span className="text-white font-bold bg-white/10 px-1 py-0.5 rounded">SOS</span>.
+                                    <div className="text-foreground text-[11px] font-bold mb-1.5 tracking-wide uppercase">System Offline</div>
+                                    <div className="text-foreground/70 text-[11px] leading-relaxed">
+                                        To request help offline, SMS your status to <span className="text-foreground font-bold bg-foreground/10 px-1 py-0.5 rounded">08604227760</span> starting with <span className="text-foreground font-bold bg-foreground/10 px-1 py-0.5 rounded">SOS</span>.
                                     </div>
                                 </div>
                             </div>
@@ -225,25 +245,25 @@ export default function SMSFallbackSection() {
                 </AnimatePresence>
 
                   {/* App Header */}
-                  <div className="relative z-10 bg-white/[0.03] backdrop-blur-md pb-3 pt-4 border-b border-white/5 flex items-center justify-center">
+                  <div className="relative z-10 bg-foreground/[0.03] backdrop-blur-md pb-3 pt-4 border-b border-foreground/5 flex items-center justify-center">
                       <div className="flex flex-col items-center">
                           <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-emerald-500 to-green-400 flex items-center justify-center text-white shadow-lg shadow-green-500/20 mb-1">
                               <Navigation size={18} fill="currentColor" />
                           </div>
-                          <span className="text-[11px] font-semibold text-white/90">Impact Gateway</span>
-                          <span className="text-[9px] text-white/40">08604227760</span>
+                          <span className="text-[11px] font-semibold text-foreground/90">Impact Gateway</span>
+                          <span className="text-[9px] text-foreground/40">08604227760</span>
                       </div>
                   </div>
 
                   {/* Chat Area */}
                   <div className="relative z-10 flex-1 p-4 flex flex-col gap-4 overflow-hidden">
-                      <div className="self-center text-[10px] font-medium text-white/30 uppercase tracking-widest mt-2">
-                          Today 9:40 AM
+                      <div className="self-center text-[10px] font-medium text-foreground/30 uppercase tracking-widest mt-2">
+                          {chatTime}
                       </div>
                       
                       {/* Received Message */}
                       <div className="self-start relative max-w-[85%]">
-                          <div className="bg-[#27272a] text-white/90 p-3 rounded-2xl rounded-tl-sm text-[13px] leading-relaxed shadow-sm">
+                          <div className="bg-foreground/10 text-foreground/90 p-3 rounded-2xl rounded-tl-sm text-[13px] leading-relaxed shadow-sm">
                               Emergency mode activated. Text your status starting with <span className="font-bold">'SOS'</span>.
                           </div>
                       </div>
@@ -257,7 +277,7 @@ export default function SMSFallbackSection() {
                   </div>
                   
                   {/* Keyboard / Input Area */}
-                  <div className="relative z-10 bg-[#18181b]/80 backdrop-blur-xl border-t border-white/5 p-3 pb-6">
+                  <div className="relative z-10 bg-background/80 backdrop-blur-xl border-t border-foreground/5 p-3 pb-6">
                       {simState === "idle" ? (
                           <div className="relative">
                             {/* BOUNCING INSTRUCTION POPUP */}
@@ -275,9 +295,9 @@ export default function SMSFallbackSection() {
                             
                             <button 
                                 onClick={triggerSimulation}
-                                className="group relative w-full flex items-center justify-between bg-black/40 border border-green-500/30 rounded-full p-1 pl-4 hover:bg-black/60 transition-all cursor-pointer shadow-[0_0_15px_rgba(34,197,94,0.15)] hover:shadow-[0_0_20px_rgba(34,197,94,0.25)]"
+                                className="group relative w-full flex items-center justify-between bg-foreground/5 border border-green-500/30 rounded-full p-1 pl-4 hover:bg-foreground/10 transition-all cursor-pointer shadow-[0_0_15px_rgba(34,197,94,0.15)] hover:shadow-[0_0_20px_rgba(34,197,94,0.25)]"
                             >
-                                <span className="text-xs text-white/40 font-medium tracking-wide">SMS Message</span>
+                                <span className="text-xs text-foreground/40 font-medium tracking-wide">SMS Message</span>
                                 <div className="w-8 h-8 rounded-full bg-green-500 flex items-center justify-center text-white shadow-[0_0_15px_rgba(34,197,94,0.4)] group-hover:scale-105 transition-transform">
                                     <Send size={14} className="ml-0.5" />
                                 </div>
@@ -289,7 +309,7 @@ export default function SMSFallbackSection() {
                           </div>
                       )}
                       {/* Home Indicator */}
-                      <div className="absolute bottom-2 left-1/2 -translate-x-1/2 w-1/3 h-1 bg-white/20 rounded-full" />
+                      <div className="absolute bottom-2 left-1/2 -translate-x-1/2 w-1/3 h-1 bg-foreground/20 rounded-full" />
                   </div>
               </div>
 
@@ -309,9 +329,9 @@ export default function SMSFallbackSection() {
                   </div>
 
                   {/* The Terminal */}
-                  <div className="w-full h-[220px] bg-[#0a0a0c]/90 backdrop-blur-xl border border-foreground/10 rounded-2xl overflow-hidden font-mono text-xs md:text-sm shadow-[0_30px_60px_rgba(0,0,0,0.5)] relative flex flex-col shrink-0 group hover:shadow-[0_40px_80px_rgba(0,0,0,0.8)] transition-shadow duration-500">
+                  <div className="w-full h-[220px] bg-background/95 backdrop-blur-xl border border-foreground/10 rounded-2xl overflow-hidden font-mono text-xs md:text-sm shadow-[0_30px_60px_rgba(0,0,0,0.5)] relative flex flex-col shrink-0 group hover:shadow-[0_40px_80px_rgba(0,0,0,0.8)] transition-shadow duration-500">
                      {/* Terminal Header */}
-                     <div className="bg-white/[0.02] border-b border-foreground/10 px-4 py-2.5 flex items-center gap-2 shrink-0">
+                     <div className="bg-foreground/[0.02] border-b border-foreground/10 px-4 py-2.5 flex items-center gap-2 shrink-0">
                        <div className="w-2.5 h-2.5 rounded-full bg-foreground/20" />
                        <div className="w-2.5 h-2.5 rounded-full bg-foreground/20" />
                        <div className="w-2.5 h-2.5 rounded-full bg-foreground/20" />
