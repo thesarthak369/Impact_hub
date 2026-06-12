@@ -1,7 +1,6 @@
 import Navbar from "@/components/layout/Navbar";
 import HeroSection from "@/components/sections/HeroSection";
-import ProblemSection from "@/components/sections/ProblemSection";
-import SolutionSection from "@/components/sections/SolutionSection";
+import HorizontalScrollSection from "@/components/sections/HorizontalScrollSection";
 import MobileAppSection from "@/components/sections/MobileAppSection";
 import SMSFallbackSection from "@/components/sections/SMSFallbackSection";
 import LiveDemoSection from "@/components/sections/LiveDemoSection";
@@ -24,8 +23,7 @@ export default function Home() {
       <div className="relative z-10">
         <Navbar />
         <HeroSection />
-        <ProblemSection />
-        <SolutionSection />
+        <HorizontalScrollSection />
         <MobileAppSection />
         <SMSFallbackSection />
         <LiveDemoSection />
