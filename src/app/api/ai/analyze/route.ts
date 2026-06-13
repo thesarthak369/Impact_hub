@@ -178,6 +178,7 @@ Return ONLY valid JSON (no markdown, no code fences) with these fields:
         parsed.recommended_action = edited_data.recommended_action || parsed.recommended_action;
         parsed.resource_needed = edited_data.resource_needed || parsed.resource_needed;
         parsed.volunteers_needed = edited_data.volunteers_needed || parsed.volunteers_needed;
+        parsed.credits_reward = edited_data.credits_reward || 0;
       }
 
       // Save to Firestore Incidents
@@ -204,6 +205,7 @@ Return ONLY valid JSON (no markdown, no code fences) with these fields:
           `Posted at: ${new Date().toISOString()}`
         ].filter(Boolean).join(" | "),
         volunteers_needed: parseInt(parsed.volunteers_needed) || 0,
+        credits_reward: Number(parsed.credits_reward) || 0,
         created_by: user?.uid || null,
         created_at: new Date().toISOString()
       };

@@ -9,7 +9,7 @@ import { useAuth } from "@/components/providers/AuthProvider";
 import { db } from "@/lib/firebase/client";
 import { 
   collection, doc, getDoc, getDocs, query, where, orderBy, limit, 
-  onSnapshot, deleteDoc 
+  onSnapshot, deleteDoc, setDoc 
 } from "firebase/firestore";
 
 interface AIPreviewData {
@@ -23,6 +23,7 @@ interface AIPreviewData {
   volunteers_needed: string;
   confidence_score: number;
   ai_verified: boolean;
+  credits_reward?: number;
 }
 
 function NGODashboardInner() {
@@ -37,10 +38,16 @@ function NGODashboardInner() {
     volunteersActive: "0",
     avgResponse: "0m",
   });
+  const [ngoCredits, setNgoCredits] = useState<number>(0);
   
   // Preview/Edit state
   const [previewData, setPreviewData] = useState<AIPreviewData | null>(null);
   const [isConfirming, setIsConfirming] = useState(false);
+  
+  // Inline Confirm states
+  const [confirmingMissionId, setConfirmingMissionId] = useState<string | null>(null);
+  const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
+  const [viewingProof, setViewingProof] = useState<any | null>(null);
   
   const searchParams = useSearchParams();
   const searchQuery = searchParams?.get("q")?.toLowerCase() || "";
@@ -69,6 +76,19 @@ function NGODashboardInner() {
     if (!user) return;
     
     try {
+      // Fetch NGO profile to get credits
+      const profileSnap = await getDoc(doc(db, "profiles", user.uid));
+      if (profileSnap.exists()) {
+        const profileData = profileSnap.data();
+        if (profileData.credits === undefined) {
+          // Initialize credits
+          await setDoc(doc(db, "profiles", user.uid), { credits: 50 }, { merge: true });
+          setNgoCredits(50);
+        } else {
+          setNgoCredits(profileData.credits);
+        }
+      }
+
       // Fetch incidents for this user with deployed volunteers
       const incidentsQuery = query(
         collection(db, "incidents"),
@@ -217,7 +237,7 @@ function NGODashboardInner() {
       
       if (response.ok && aiData.data) {
         // Show the editable preview modal
-        setPreviewData(aiData.data);
+        setPreviewData({ ...aiData.data, credits_reward: 2 }); // Default 2 credits
       } else {
         setSubmitError(aiData.error || aiData.details || "AI processing failed. Please try again.");
       }
@@ -246,7 +266,7 @@ function NGODashboardInner() {
         },
         body: JSON.stringify({ 
           text: reportText, 
-          edited_data: previewData 
+          edited_data: previewData
         })
       });
       
@@ -269,9 +289,53 @@ function NGODashboardInner() {
     }
   };
 
+  const approveMission = async (missionId: string, volunteerId: string) => {
+    if (!user) return;
+    try {
+      // Fetch mission to get incident
+      const missionSnap = await getDoc(doc(db, "missions", missionId));
+      if (!missionSnap.exists()) return;
+      const missionData = missionSnap.data();
+      
+      const incidentSnap = await getDoc(doc(db, "incidents", missionData.incident_id));
+      if (!incidentSnap.exists()) return;
+      const incidentData = incidentSnap.data();
+      const reward = incidentData.credits_reward || 2; // Fallback to 2 for old incidents
+
+      // Update mission status to Completed
+      await setDoc(doc(db, "missions", missionId), { status: "Completed" }, { merge: true });
+
+      if (reward > 0) {
+        // Deduct from NGO
+        const currentCredits = ngoCredits - reward;
+        await setDoc(doc(db, "profiles", user!.uid), { credits: currentCredits }, { merge: true });
+        setNgoCredits(currentCredits);
+
+        // Add to Volunteer
+        const volSnap = await getDoc(doc(db, "profiles", volunteerId));
+        if (volSnap.exists()) {
+          const volCredits = (volSnap.data().credits || 0) + reward;
+          await setDoc(doc(db, "profiles", volunteerId), { credits: volCredits }, { merge: true });
+        }
+
+        // Log transaction
+        const txRef = doc(collection(db, "credit_transactions"));
+        await setDoc(txRef, {
+          from_id: user!.uid,
+          to_id: volunteerId,
+          amount: reward,
+          mission_id: missionId,
+          created_at: new Date().toISOString()
+        });
+      }
+
+      fetchData();
+    } catch (error) {
+      console.error("Error approving mission:", error);
+    }
+  };
+
   const deleteIncident = async (id: string) => {
-    if (!confirm('Delete this incident? This action cannot be undone.')) return;
-    
     try {
       // Delete associated missions first
       const missionsQuery = query(collection(db, "missions"), where("incident_id", "==", id));
@@ -312,9 +376,15 @@ function NGODashboardInner() {
             <h1 className="text-3xl font-bold mb-1 tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-white to-gray-400">NGO Command Center</h1>
             <p className="text-sm text-accent-dim">Real-time resource allocation and automated AI report parsing.</p>
           </div>
-          <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-foreground/[0.04] border border-foreground/[0.08] text-xs text-foreground font-medium shadow-lg backdrop-blur-sm">
-            <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse shadow-[0_0_10px_rgba(34,197,94,0.6)]" />
-            System Online
+          <div className="flex flex-col items-end gap-2">
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-xs text-indigo-400 font-bold shadow-lg backdrop-blur-sm shadow-[0_0_15px_rgba(99,102,241,0.2)]">
+              <Sparkles size={12} />
+              Impact Hub Credits: {ngoCredits} (= ₹{ngoCredits * 100})
+            </div>
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-foreground/[0.04] border border-foreground/[0.08] text-xs text-foreground font-medium shadow-lg backdrop-blur-sm">
+              <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse shadow-[0_0_10px_rgba(34,197,94,0.6)]" />
+              System Online
+            </div>
           </div>
         </div>
 
@@ -577,12 +647,67 @@ function NGODashboardInner() {
                           {need.status === "In Transit" && <><div className="w-1.5 h-1.5 rounded-full bg-foreground animate-pulse" />In Transit</>}
                           {need.status === "Resolved" && <><CheckCircle2 size={12} className="text-green-500" />Resolved</>}
                         </span>
+                        
+                        {/* Approve missions logic */}
+                        {need.missions && need.missions.some((m: any) => m.status === 'Pending Approval') && (
+                          <div className="flex flex-col gap-1.5 mt-2 pt-2 border-t border-foreground/[0.04]">
+                            {need.missions.filter((m: any) => m.status === 'Pending Approval').map((m: any) => (
+                              <div key={m.id} className="flex items-center justify-between sm:justify-end gap-2 bg-foreground/[0.02] p-1.5 rounded-lg border border-foreground/[0.04]">
+                                <span className="text-[10px] text-accent-dim mr-auto pl-1 sm:hidden">
+                                  {m.profiles?.name || 'Volunteer'} pending
+                                </span>
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); setViewingProof(m); }}
+                                  className="flex items-center gap-1 text-[10px] text-accent-dim hover:text-foreground px-2 py-1.5 rounded-lg border border-foreground/[0.08] hover:bg-foreground/5 transition-all font-medium"
+                                  title="View Proof of Work"
+                                >
+                                  <FileText size={11} /> Proof
+                                </button>
+                                <button
+                                  onClick={(e) => { 
+                                    e.stopPropagation(); 
+                                    if (confirmingMissionId === m.id) {
+                                      approveMission(m.id, m.volunteer_id);
+                                      setConfirmingMissionId(null);
+                                    } else {
+                                      setConfirmingMissionId(m.id);
+                                    }
+                                  }}
+                                  onMouseLeave={() => setConfirmingMissionId(null)}
+                                  className={`flex items-center gap-1 text-[10px] px-2 py-1.5 rounded-lg border transition-all font-bold ${
+                                    confirmingMissionId === m.id 
+                                      ? "bg-green-500 text-background border-green-500 shadow-[0_0_10px_rgba(34,197,94,0.4)]" 
+                                      : "text-green-400 hover:bg-green-500/10 border-green-500/20"
+                                  }`}
+                                >
+                                  <CheckCircle2 size={11} /> 
+                                  {confirmingMissionId === m.id ? "Confirm Transfer?" : `Approve ${m.profiles?.name || 'Volunteer'}`}
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
                         <button
-                          onClick={(e) => { e.stopPropagation(); deleteIncident(need.id); }}
-                          className="flex items-center gap-1 text-[10px] text-red-400/60 hover:text-red-400 px-2 py-1 rounded-lg hover:bg-red-500/10 border border-transparent hover:border-red-500/20 transition-all"
+                          onClick={(e) => { 
+                            e.stopPropagation(); 
+                            if (confirmingDeleteId === need.id) {
+                              deleteIncident(need.id);
+                              setConfirmingDeleteId(null);
+                            } else {
+                              setConfirmingDeleteId(need.id);
+                            }
+                          }}
+                          onMouseLeave={() => setConfirmingDeleteId(null)}
+                          className={`flex items-center gap-1 text-[10px] px-2 py-1 rounded-lg border transition-all ${
+                            confirmingDeleteId === need.id 
+                              ? "bg-red-500 text-background border-red-500 font-bold shadow-[0_0_10px_rgba(239,68,68,0.4)]" 
+                              : "text-red-400/60 hover:text-red-400 hover:bg-red-500/10 border-transparent hover:border-red-500/20"
+                          }`}
                           title="Delete Incident"
                         >
-                          <Trash2 size={11} /> Delete
+                          <Trash2 size={11} /> 
+                          {confirmingDeleteId === need.id ? "Are you sure?" : "Delete"}
                         </button>
                       </div>
                     </motion.div>
@@ -736,16 +861,28 @@ function NGODashboardInner() {
                   />
                 </div>
 
-                {/* Volunteers Needed */}
-                <div>
-                  <label className="block text-[10px] text-accent-dim font-bold uppercase tracking-widest mb-1.5">Volunteers Needed</label>
-                  <input
-                    type="number"
-                    value={previewData.volunteers_needed}
-                    onChange={(e) => setPreviewData({ ...previewData, volunteers_needed: e.target.value })}
-                    className="w-full px-3 py-2.5 rounded-xl bg-background/50 border border-foreground/[0.1] text-sm text-foreground focus:outline-none focus:border-foreground/30 focus:ring-1 focus:ring-foreground/20 transition-all"
-                    min="0"
-                  />
+                {/* Volunteers Needed & Credits Reward */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[10px] text-accent-dim font-bold uppercase tracking-widest mb-1.5">Volunteers Needed</label>
+                    <input
+                      type="number"
+                      value={previewData.volunteers_needed}
+                      onChange={(e) => setPreviewData({ ...previewData, volunteers_needed: e.target.value })}
+                      className="w-full px-3 py-2.5 rounded-xl bg-background/50 border border-foreground/[0.1] text-sm text-foreground focus:outline-none focus:border-foreground/30 focus:ring-1 focus:ring-foreground/20 transition-all"
+                      min="0"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-accent-dim font-bold uppercase tracking-widest mb-1.5">Credits per Vol. (₹100/cr)</label>
+                    <input
+                      type="number"
+                      value={previewData.credits_reward || 0}
+                      onChange={(e) => setPreviewData({ ...previewData, credits_reward: Number(e.target.value) })}
+                      className="w-full px-3 py-2.5 rounded-xl bg-background/50 border border-foreground/[0.1] text-sm text-indigo-400 font-bold focus:outline-none focus:border-indigo-500/30 focus:ring-1 focus:ring-indigo-500/20 transition-all"
+                      min="0"
+                    />
+                  </div>
                 </div>
 
                 {/* Error */}
@@ -776,6 +913,78 @@ function NGODashboardInner() {
                     <><Send size={14} /> Confirm & Dispatch</>
                   )}
                 </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* === PROOF MODAL === */}
+      <AnimatePresence>
+        {viewingProof && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] flex items-center justify-center p-4"
+          >
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setViewingProof(null)} />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }} 
+              animate={{ opacity: 1, scale: 1, y: 0 }} 
+              exit={{ opacity: 0, scale: 0.95, y: 20 }} 
+              onClick={(e) => e.stopPropagation()} 
+              className="relative w-full max-w-md bg-background border border-foreground/10 rounded-2xl shadow-2xl overflow-hidden"
+            >
+              <div className="flex items-center justify-between p-5 border-b border-foreground/[0.08] bg-foreground/[0.02]">
+                <h3 className="font-bold text-lg tracking-tight flex items-center gap-2">
+                  <FileText size={18} className="text-accent-muted" /> Proof of Work
+                </h3>
+                <button
+                  onClick={() => setViewingProof(null)}
+                  className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-foreground/10 transition-colors"
+                >
+                  <X size={16} className="text-accent-dim" />
+                </button>
+              </div>
+              
+              <div className="p-6">
+                <div className="flex items-center gap-3 mb-6">
+                  {viewingProof.profiles?.avatar_url ? (
+                    <img src={viewingProof.profiles.avatar_url} alt="" className="w-10 h-10 rounded-full border border-foreground/10" />
+                  ) : (
+                    <div className="w-10 h-10 rounded-full bg-indigo-500/20 border border-indigo-500/30 flex items-center justify-center">
+                      <Users size={16} className="text-indigo-400" />
+                    </div>
+                  )}
+                  <div>
+                    <div className="font-bold text-sm">{viewingProof.profiles?.name || viewingProof.profiles?.metadata?.full_name || 'Volunteer'}</div>
+                    <div className="text-[10px] text-accent-dim tracking-widest uppercase font-bold">Submitted Proof</div>
+                  </div>
+                </div>
+
+                <div className="bg-foreground/[0.03] border border-foreground/[0.08] rounded-xl p-4 text-sm text-foreground whitespace-pre-wrap font-mono min-h-[100px] break-words">
+                  {viewingProof.proof_text || <span className="text-accent-muted italic">No text provided.</span>}
+                </div>
+
+                {viewingProof.proof_url && (
+                  <div className="mt-4 rounded-xl overflow-hidden border border-foreground/10 bg-black">
+                    <img src={viewingProof.proof_url} alt="Proof of work" className="w-full max-h-[300px] object-contain" />
+                  </div>
+                )}
+
+                <div className="mt-6 flex gap-3">
+                  <button onClick={() => setViewingProof(null)} className="flex-1 h-11 rounded-xl bg-foreground/[0.04] text-sm font-medium hover:bg-foreground/[0.08] transition-all">Close</button>
+                  <button 
+                    onClick={() => {
+                      approveMission(viewingProof.id, viewingProof.volunteer_id);
+                      setViewingProof(null);
+                    }}
+                    className="flex-[2] h-11 rounded-xl bg-green-500 text-black font-bold text-sm flex items-center justify-center gap-2 hover:bg-green-400 transition-all shadow-[0_0_15px_rgba(34,197,94,0.3)]"
+                  >
+                    <CheckCircle2 size={16} /> Approve Now
+                  </button>
+                </div>
               </div>
             </motion.div>
           </motion.div>
