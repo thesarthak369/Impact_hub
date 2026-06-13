@@ -227,12 +227,8 @@ export default function PageLoader({ children }: { children: React.ReactNode }) 
       </AnimatePresence>
 
       <motion.div
-        initial={{ opacity: 0, filter: "blur(12px)", scale: 0.98 }}
-        animate={{ 
-          opacity: isLoading ? 0 : 1,
-          filter: isLoading ? "blur(12px)" : "blur(0px)",
-          scale: isLoading ? 0.98 : 1
-        }}
+        initial={{ opacity: 0 }}
+        animate={{ opacity: isLoading ? 0 : 1 }}
         transition={{ duration: 0.8, delay: 0.1, ease: [0.22, 1, 0.36, 1] }}
         className="w-full h-full"
       >

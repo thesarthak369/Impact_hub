@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, Suspense } from "react";
+import { createPortal } from "react-dom";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
@@ -52,6 +53,11 @@ function DashboardLayoutInner({ children, role }: DashboardLayoutProps) {
   const [isAdmin, setIsAdmin] = useState(false);
   const [searchQuery, setSearchQuery] = useState(searchParams?.get("q") || "");
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   const handleSearch = (e: React.ChangeEvent<HTMLInputElement>) => {
     const query = e.target.value;
@@ -81,7 +87,7 @@ function DashboardLayoutInner({ children, role }: DashboardLayoutProps) {
   };
 
   const baseLinks = actualRole === "ngo" ? ngoLinks : actualRole === "volunteer" ? volunteerLinks : adminLinks;
-  const links = isAdmin 
+  const links = isAdmin
     ? [...baseLinks, { href: "/admin", label: "Admin", icon: ShieldAlert }]
     : baseLinks;
   const roleLabel = actualRole === "ngo" ? "NGO" : actualRole === "volunteer" ? "Volunteer" : "Admin";
@@ -92,7 +98,7 @@ function DashboardLayoutInner({ children, role }: DashboardLayoutProps) {
       <header className="h-14 flex items-center justify-between px-5 border-b border-foreground/[0.05] bg-background/70 backdrop-blur-md z-30 shrink-0">
         <div className="flex items-center gap-3.5">
           <Link href="/" className="flex items-center gap-2 group">
-            <motion.div 
+            <motion.div
               className="w-5 h-5"
               whileHover={{ rotate: 360, scale: 1.15 }}
               transition={{ type: "spring", stiffness: 200, damping: 15 }}
@@ -122,8 +128,8 @@ function DashboardLayoutInner({ children, role }: DashboardLayoutProps) {
 
           {/* Profile Dropdown */}
           <div className="relative ml-1">
-            <button 
-              onClick={() => setUserMenuOpen(!userMenuOpen)} 
+            <button
+              onClick={() => setUserMenuOpen(!userMenuOpen)}
               className="flex items-center gap-1 focus:outline-none transition-all hover:opacity-90 active:scale-95"
             >
               {user?.photoURL ? (
@@ -140,7 +146,7 @@ function DashboardLayoutInner({ children, role }: DashboardLayoutProps) {
                 <>
                   {/* Backdrop */}
                   <div className="fixed inset-0 z-30" onClick={() => setUserMenuOpen(false)} />
-                  
+
                   {/* Dropdown Card */}
                   <motion.div
                     initial={{ opacity: 0, scale: 0.95, y: 10 }}
@@ -158,8 +164,8 @@ function DashboardLayoutInner({ children, role }: DashboardLayoutProps) {
                     </div>
 
                     <div className="space-y-0.5">
-                      <Link 
-                        href="/settings" 
+                      <Link
+                        href="/settings"
                         onClick={() => setUserMenuOpen(false)}
                         className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs text-accent-dim hover:text-foreground hover:bg-foreground/[0.03] transition-all"
                       >
@@ -198,42 +204,61 @@ function DashboardLayoutInner({ children, role }: DashboardLayoutProps) {
         </div>
       </main>
 
-      {/* Floating Bottom Navigation */}
-      <div className="fixed bottom-[10px] left-1/2 -translate-x-1/2 z-50 w-full max-w-lg px-4 pointer-events-none">
-        <div className="bg-background/80 backdrop-blur-xl border border-foreground/10 rounded-[15px] shadow-2xl p-2 flex items-center justify-around pointer-events-auto">
-          {links.map((link) => {
-            const isActive = pathname === link.href;
-            return (
-              <Link
-                key={link.label + link.href}
-                href={link.href}
-                className={`flex flex-col items-center gap-1 p-2 rounded-xl transition-all duration-200 ${
-                  isActive
-                    ? "text-foreground bg-foreground/[0.08]"
-                    : "text-accent-dim hover:text-foreground hover:bg-foreground/[0.04]"
-                }`}
-                title={link.label}
-              >
-                <link.icon size={20} strokeWidth={isActive ? 2 : 1.5} />
-                <span className="text-[9px] font-medium hidden sm:block">{link.label}</span>
-              </Link>
-            );
-          })}
-          <div className="w-px h-8 bg-foreground/10 mx-1" />
-          <Link
-            href="/settings"
-            className={`flex flex-col items-center gap-1 p-2 rounded-xl transition-all duration-200 ${
-              pathname === "/settings"
-                ? "text-foreground bg-foreground/[0.08]"
-                : "text-accent-dim hover:text-foreground hover:bg-foreground/[0.04]"
-            }`}
-            title="Settings"
-          >
-            <Settings size={20} strokeWidth={pathname === "/settings" ? 2 : 1.5} />
-            <span className="text-[9px] font-medium hidden sm:block">Settings</span>
-          </Link>
-        </div>
-      </div>
+      {/* Floating Bottom Navigation - Rendered as a Portal to be completely independent */}
+      {mounted && createPortal(
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[99999] w-full max-w-3xl px-4 pointer-events-none">
+          <div className="bg-background/85 backdrop-blur-xl border border-foreground/10 rounded-[24px] shadow-[0_8px_30px_rgb(0,0,0,0.12)] p-2 flex items-center justify-between pointer-events-auto gap-1">
+            {links.map((link) => {
+              const isActive = pathname === link.href;
+              return (
+                <Link
+                  key={link.label + link.href}
+                  href={link.href}
+                  className="relative group outline-none flex-1 flex justify-center"
+                  title={link.label}
+                >
+                  <div className={`flex flex-col items-center justify-center gap-1 w-full py-2 rounded-[16px] transition-all duration-300 ease-out active:scale-95 ${isActive
+                      ? "text-foreground bg-foreground/10 shadow-sm"
+                      : "text-accent-dim hover:text-foreground hover:bg-foreground/[0.06] hover:-translate-y-0.5"
+                    }`}>
+                    <link.icon
+                      size={22}
+                      strokeWidth={isActive ? 2.5 : 1.5}
+                      className={`transition-transform duration-300 shrink-0 ${isActive ? 'scale-110' : 'group-hover:scale-110'}`}
+                    />
+                    <span className={`text-[10px] whitespace-nowrap font-medium hidden sm:block transition-all duration-300 ${isActive ? "opacity-100 font-bold" : "opacity-80"
+                      }`}>
+                      {link.label}
+                    </span>
+                  </div>
+                </Link>
+              );
+            })}
+            <div className="w-px h-10 bg-foreground/15 mx-1 shrink-0 rounded-full" />
+            <Link
+              href="/settings"
+              className="relative group outline-none flex-1 flex justify-center"
+              title="Settings"
+            >
+              <div className={`flex flex-col items-center justify-center gap-1 w-full py-2 rounded-[16px] transition-all duration-300 ease-out active:scale-95 ${pathname === "/settings"
+                  ? "text-foreground bg-foreground/10 shadow-sm"
+                  : "text-accent-dim hover:text-foreground hover:bg-foreground/[0.06] hover:-translate-y-0.5"
+                }`}>
+                <Settings
+                  size={22}
+                  strokeWidth={pathname === "/settings" ? 2.5 : 1.5}
+                  className={`transition-transform duration-300 shrink-0 ${pathname === "/settings" ? 'scale-110 rotate-90' : 'group-hover:scale-110 group-hover:rotate-45'}`}
+                />
+                <span className={`text-[10px] whitespace-nowrap font-medium hidden sm:block transition-all duration-300 ${pathname === "/settings" ? "opacity-100 font-bold" : "opacity-80"
+                  }`}>
+                  Settings
+                </span>
+              </div>
+            </Link>
+          </div>
+        </div>,
+        document.body
+      )}
     </div>
   );
 }
