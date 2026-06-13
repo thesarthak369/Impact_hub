@@ -5,7 +5,6 @@ from pydantic import BaseModel
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
-import datetime
 import firebase_admin
 from firebase_admin import credentials, firestore
 
@@ -22,33 +21,17 @@ client = genai.Client(
     location="us-central1"
 )
 
-# Initialize Firebase Admin
-project_id = os.environ.get("FIREBASE_PROJECT_ID")
-client_email = os.environ.get("FIREBASE_CLIENT_EMAIL")
-private_key = os.environ.get("FIREBASE_PRIVATE_KEY")
-
+# 4. Initialize Firebase Admin Client securely using the JSON file
 if not firebase_admin._apps:
-    if project_id and client_email and private_key:
-        pk = private_key.replace("\\n", "\n")
-        cred = credentials.Certificate({
-            "type": "service_account",
-            "project_id": project_id,
-            "private_key": pk,
-            "client_email": client_email,
-            "token_uri": "https://oauth2.googleapis.com/token",
-        })
-        firebase_admin.initialize_app(cred)
-    else:
-        # Fallback to Application Default Credentials
-        firebase_admin.initialize_app()
-
+    cred = credentials.Certificate("firebase-key.json")
+    firebase_admin.initialize_app(cred)
 db = firestore.client()
 
-# 4. Define what an incoming data payload looks like
+# 5. Define what an incoming data payload looks like
 class SMSPayload(BaseModel):
     message: str
 
-# 5. Create the web endpoint that receives the data
+# 6. Create the web endpoint that receives the data
 @app.post("/api/sms")
 async def handle_sms(payload: SMSPayload):
     prompt = f"""
@@ -78,28 +61,27 @@ async def handle_sms(payload: SMSPayload):
         
         structured_data = json.loads(response.text)
         
-        # Generate new document ID and save
-        doc_ref = db.collection("incidents").document()
-        incident_id = doc_ref.id
-        
-        doc_ref.set({
-            "id": incident_id,
+        incident_data = {
             "location": structured_data.get("location", "Unknown"),
             "type": structured_data.get("type", "Other"),
             "priority": structured_data.get("priority", "HIGH"),
             "status": "Active",
             "affected": str(structured_data.get("affected", "Unknown")),
             "description": payload.message,
-            "volunteers_needed": int(structured_data.get("volunteers_needed", 0)),
-            "resources_needed": structured_data.get("resources_needed", "None"),
-            "created_at": datetime.datetime.utcnow().isoformat() + "Z"
-        })
+            "volunteers_needed": structured_data.get("volunteers_needed", 0),
+            "resources_needed": structured_data.get("resources_needed", "None")
+        }
+        
+        doc_ref = db.collection("incidents").document()
+        doc_ref.set(incident_data)
         
         return {
             "status": "success",
             "extracted_data": structured_data,
-            "database_id": incident_id
+            "database_id": doc_ref.id
         }
         
     except Exception as e:
+        import traceback
+        print(traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))

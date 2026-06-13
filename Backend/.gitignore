@@ -113,3 +113,5 @@ ngrok
 .idea/
 *.swp
 *.swo
+
+firebase-key.json

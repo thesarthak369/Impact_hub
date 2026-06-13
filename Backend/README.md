@@ -1,49 +1,22 @@
-# Impact Hub - SMS Fallback Pipeline
+## 📡 How It Works: The Offline-to-Cloud Pipeline
 
-This document explains the step-by-step process of how our SMS Fallback feature works. This feature allows users without internet access to send disaster reports via SMS, which are then automatically processed by our AI (Gemma) and added to the Live Heatmap.
+During a disaster, internet and data networks are usually the first things to go down. Our system is built so that victims don't need an app, a smartphone, or an internet connection to get help. All they need is a basic cellular signal. 
 
-## How the Pipeline Works
+Here is exactly how a simple text message turns into a live rescue mission:
 
-1. **User Sends an SMS:** A person in a disaster zone sends an SMS (e.g., "Heavy flooding in sector 4, 3 families stranded") from their phone.
-2. **SMS Gateway:** We use an Android app (like "SMS Forwarder") or a service like Twilio to catch this incoming SMS and forward it over the internet to our PC.
-3. **Ngrok Tunnel:** Because our Python server is running locally on the PC, the SMS gateway uses an Ngrok URL (e.g., `https://random.ngrok-free.app`) to reach our PC securely over the internet.
-4. **FastAPI Webhook:** Our Python server (`main.py`) running on the PC receives the SMS payload on the `/api/sms` endpoint.
-5. **Gemma AI Processing:** The Python server takes the text from the SMS and sends it to our local AI model (Gemma, running via Ollama) to extract structured details like location, priority, and resources needed.
-6. **Database Update:** Once Gemma returns the structured JSON data, the Python server saves it directly to our Supabase database (into the `incidents` table).
-7. **Live Heatmap:** The Next.js frontend is subscribed to the database. As soon as the new incident is saved, the Live Heatmap updates automatically!
+### 1. The SOS Text (No Internet Required)
+A victim in a crisis zone takes out any phone (even an old keypad phone) and sends a standard SMS text message to our dedicated Command Hub phone number. They just start the message with our trigger word (e.g., "SOS") and describe their situation. 
+* *Example: "SOS structural collapse at sector 4, 10 people trapped, need medics"*
 
-## Setup Instructions (Step-by-Step)
+### 2. The Bridge (MacroDroid Intercept)
+We have a central Android phone stationed in a safe zone with an internet connection. This phone acts as the bridge. A background automation tool (MacroDroid) constantly listens for incoming texts. The second it sees a text starting with "SOS", it instantly grabs the message and silently forwards it up to our cloud servers.
 
-### Step 1: Install Python Dependencies
-Open your terminal in the `Backend` folder and install the required packages:
-```bash
-pip install fastapi uvicorn supabase requests python-dotenv pydantic
-```
+### 3. The Brain (Google Cloud & AI)
+The message arrives at our custom backend, running 24/7 on Google Cloud. We use Google's Gemini AI to instantly read the messy, panicked text message and cleanly extract the exact data our rescue teams need:
+* **Location:** Sector 4
+* **Type of Emergency:** Structural Collapse
+* **Priority:** HIGH
+* **Resources Needed:** Medics
 
-### Step 2: Configure Environment Variables
-Create a `.env` file in the `Backend` folder and add your Supabase credentials:
-```env
-SUPABASE_URL=your_supabase_url_here
-SUPABASE_KEY=your_supabase_service_role_key_here
-```
-
-### Step 3: Start the Python Server
-Run the FastAPI server:
-```bash
-uvicorn main:app --reload
-```
-The server will start at `http://127.0.0.1:8000`.
-
-### Step 4: Expose the Server using Ngrok
-In a new terminal window, run Ngrok to expose port 8000:
-```bash
-ngrok http 8000
-```
-Copy the `Forwarding` URL (e.g., `https://abc-123.ngrok-free.app`).
-
-### Step 5: Configure the SMS Gateway
-Set up your SMS forwarding app (or Twilio webhook) to send incoming messages via POST request to:
-`https://abc-123.ngrok-free.app/api/sms`
-
----
-Once this setup is complete, any SMS sent to the designated phone number will automatically flow through the AI and appear on the Impact Hub Live Map!
+### 4. The Live Map (Database & Dashboard)
+Once the AI organizes the data, our Python script pushes it straight into our real-time database. The absolute second that data hits the database, our Next.js web dashboard updates automatically. A red priority pin drops onto the live digital map, giving rescue dispatchers the exact coordinates and details they need to send help immediately.
