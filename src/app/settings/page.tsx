@@ -4,64 +4,57 @@ import DashboardLayout from "@/components/layout/DashboardLayout";
 import { motion } from "framer-motion";
 import { Settings as SettingsIcon, User, Bell, Shield, Globe, Palette, Database, Key, Save, CheckCircle2 } from "lucide-react";
 import { useState, useEffect } from "react";
-import { createClient } from "@/lib/supabase/client";
+import { useAuth } from "@/components/providers/AuthProvider";
+import { db } from "@/lib/firebase/client";
+import { doc, setDoc } from "firebase/firestore";
 
 export default function SettingsPage() {
   const [saved, setSaved] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [user, setUser] = useState<any>(null);
+  const { user, role, metadata } = useAuth();
   
   const [profile, setProfile] = useState({ name: "", email: "", role: "", org: "" });
   const [notifSettings, setNotifSettings] = useState({ criticalAlerts: true, aiUpdates: true, volunteerStatus: true, weeklyReports: true, emailDigest: false, smsAlerts: false });
   const [aiSettings, setAiSettings] = useState({ autoProcess: true, autoDispatch: false, confidenceThreshold: 75, model: "gemini-2.5-flash" });
 
-  const supabase = createClient();
-
   useEffect(() => {
-    async function fetchSettings() {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (user) {
-        setUser(user);
-        const { data: prof } = await supabase.from('profiles').select('*').eq('id', user.id).single();
-        if (prof) {
-          setProfile({
-            name: prof.name || prof.metadata?.orgName || "",
-            email: prof.email || user.email || "",
-            role: prof.role || "",
-            org: prof.metadata?.orgName || prof.metadata?.location || ""
-          });
-        } else {
-          setProfile(prev => ({ ...prev, email: user.email || "" }));
-        }
-      }
+    if (user) {
+      setProfile({
+        name: user.displayName || metadata?.orgName || "",
+        email: user.email || "",
+        role: role || "",
+        org: metadata?.orgName || metadata?.location || ""
+      });
       setLoading(false);
     }
-    fetchSettings();
-  }, [supabase]);
+  }, [user, role, metadata]);
 
   const handleSave = async () => {
     if (!user) return;
     setSaving(true);
     
-    // We update name and some metadata
-    const { data: currentProf } = await supabase.from('profiles').select('metadata').eq('id', user.id).single();
-    let newMetadata = currentProf?.metadata || {};
-    
-    if (profile.role === 'ngo') {
-      newMetadata.orgName = profile.org || profile.name;
-    } else if (profile.role === 'volunteer') {
-      newMetadata.location = profile.org;
+    try {
+      let newMetadata = metadata || {};
+      
+      if (profile.role === 'ngo') {
+        newMetadata.orgName = profile.org || profile.name;
+      } else if (profile.role === 'volunteer') {
+        newMetadata.location = profile.org;
+      }
+
+      await setDoc(doc(db, "profiles", user.uid), {
+        name: profile.name,
+        metadata: newMetadata
+      }, { merge: true });
+
+      setSaved(true); 
+      setTimeout(() => setSaved(false), 2000); 
+    } catch (error) {
+      console.error("Error saving settings:", error);
+    } finally {
+      setSaving(false);
     }
-
-    await supabase.from('profiles').update({
-      name: profile.name,
-      metadata: newMetadata
-    }).eq('id', user.id);
-
-    setSaving(false);
-    setSaved(true); 
-    setTimeout(() => setSaved(false), 2000); 
   };
 
   const Toggle = ({ checked, onChange }: { checked: boolean; onChange: () => void }) => (

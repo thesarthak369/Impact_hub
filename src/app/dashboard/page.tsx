@@ -1,31 +1,42 @@
-import { redirect } from "next/navigation";
-import { createClient } from "@/lib/supabase/server";
+"use client";
+
+import { useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { useAuth } from "@/components/providers/AuthProvider";
 import { Activity, AlertTriangle, Users, Map as MapIcon, Settings, Search, Bell, Menu, CheckCircle2 } from "lucide-react";
 import Link from "next/link";
 
-export default async function Dashboard() {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+export default function Dashboard() {
+  const { user, role, metadata, loading } = useAuth();
+  const router = useRouter();
 
-  if (!user) {
-    redirect("/login");
+  useEffect(() => {
+    if (!loading) {
+      if (!user) {
+        router.push("/login");
+        return;
+      }
+      if (role === "ngo") {
+        router.push("/ngo-dashboard");
+      } else if (role === "volunteer") {
+        router.push("/volunteer-dashboard");
+      }
+    }
+  }, [user, role, loading, router]);
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-[#020617] text-white flex items-center justify-center">
+        <div className="w-8 h-8 border-2 border-foreground/20 border-t-foreground rounded-full animate-spin" />
+      </div>
+    );
   }
 
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("role")
-    .eq("id", user.id)
-    .single();
+  if (!user) return null;
 
-  if (profile?.role === "ngo") {
-    redirect("/ngo-dashboard");
-  } else if (profile?.role === "volunteer") {
-    redirect("/volunteer-dashboard");
-  }
-  
   // If no role or admin, show the original generic dashboard content below
   return (
-    <div className="min-h-screen bg-background text-foreground font-helvetica flex overflow-hidden">
+    <div className="min-h-screen bg-[#020617] text-slate-100 font-helvetica flex overflow-hidden">
       <main className="flex-1 flex flex-col h-screen overflow-hidden relative">
         <header className="h-16 flex items-center justify-between px-6 border-b border-foreground/[0.06] bg-background/80 backdrop-blur-md z-10">
           <div className="flex items-center gap-4">

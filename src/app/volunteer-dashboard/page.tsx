@@ -5,7 +5,12 @@ import { motion, AnimatePresence } from "framer-motion";
 import { MapPin, Clock, CheckCircle2, Star, ArrowRight, Zap, Trophy, Target, Heart, Navigation2, BrainCircuit, X, Sparkles, Shield, Bell } from "lucide-react";
 import { useState, useEffect, useRef, useMemo, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
-import { createClient } from "@/lib/supabase/client";
+import { useAuth } from "@/components/providers/AuthProvider";
+import { db } from "@/lib/firebase/client";
+import { 
+  collection, doc, getDoc, getDocs, query, where, orderBy, limit, 
+  onSnapshot, setDoc 
+} from "firebase/firestore";
 
 interface AIBriefing {
   location: string;
@@ -39,84 +44,120 @@ function VolunteerDashboardInner() {
   const [pendingDeployId, setPendingDeployId] = useState<string | null>(null);
   const [briefingLoading, setBriefingLoading] = useState(false);
   
-  const supabase = createClient();
+  const { user } = useAuth();
   const searchParams = useSearchParams();
   const searchQuery = searchParams?.get("q")?.toLowerCase() || "";
-  const [user, setUser] = useState<any>(null);
   const [aiSuggestions, setAiSuggestions] = useState<any[]>([]);
   const userIdRef = useRef<string | null>(null);
 
   useEffect(() => {
-    async function init() {
-      const { data: { user } } = await supabase.auth.getUser();
-      setUser(user);
-      if (user) {
-        userIdRef.current = user.id;
-        fetchData(user.id);
-      }
-    }
-    
-    init();
+    if (!user) return;
+    userIdRef.current = user.uid;
+    fetchData(user.uid);
 
     // Set up realtime subscriptions
-    const channel = supabase
-      .channel('public:volunteer_updates')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'incidents' }, () => {
-        if (userIdRef.current) fetchData(userIdRef.current);
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'missions' }, () => {
-        if (userIdRef.current) fetchData(userIdRef.current);
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'notifications' }, () => {
-        if (userIdRef.current) fetchAISuggestions(userIdRef.current);
-      })
-      .subscribe();
+    const unsubscribeIncidents = onSnapshot(collection(db, "incidents"), () => {
+      if (userIdRef.current) fetchData(userIdRef.current);
+    });
+    const unsubscribeMissions = onSnapshot(collection(db, "missions"), () => {
+      if (userIdRef.current) fetchData(userIdRef.current);
+    });
+    const unsubscribeNotifications = onSnapshot(collection(db, "notifications"), () => {
+      if (userIdRef.current) fetchAISuggestions(userIdRef.current);
+    });
       
     return () => {
-      supabase.removeChannel(channel);
+      unsubscribeIncidents();
+      unsubscribeMissions();
+      unsubscribeNotifications();
     };
-  }, [supabase]);
+  }, [user]);
 
   const fetchData = async (userId: string) => {
-    // Fetch Active Incidents not yet resolved
-    const { data: incidents } = await supabase
-      .from('incidents')
-      .select('*, profiles(*), missions(id, volunteer_id, profiles(*))')
-      .neq('status', 'Resolved')
-      .order('created_at', { ascending: false });
+    try {
+      // Fetch Active Incidents not yet resolved
+      const incidentsSnap = await getDocs(
+        query(collection(db, "incidents"), orderBy("created_at", "desc"))
+      );
       
-    if (incidents) setAvailableMissions(incidents);
+      const incList: any[] = [];
+      const profileCache: { [key: string]: any } = {};
 
-    // Fetch my NGO memberships
-    const { data: memberships } = await supabase
-      .from('ngo_members')
-      .select('ngo_user_id')
-      .eq('member_user_id', userId);
+      for (const incDoc of incidentsSnap.docs) {
+        const inc = { id: incDoc.id, ...incDoc.data() } as any;
+        if (inc.status === "Resolved") continue;
+
+        // Fetch creator profile
+        if (inc.created_by) {
+          if (!profileCache[inc.created_by]) {
+            const pSnap = await getDoc(doc(db, "profiles", inc.created_by));
+            if (pSnap.exists()) {
+              profileCache[inc.created_by] = pSnap.data();
+            }
+          }
+          inc.profiles = profileCache[inc.created_by] || null;
+        }
+
+        // Fetch missions for this incident
+        const mSnap = await getDocs(
+          query(collection(db, "missions"), where("incident_id", "==", incDoc.id))
+        );
+        const missionsList: any[] = [];
+
+        for (const mDoc of mSnap.docs) {
+          const mData = { id: mDoc.id, ...mDoc.data() } as any;
+          
+          // Fetch volunteer profile
+          if (mData.volunteer_id) {
+            if (!profileCache[mData.volunteer_id]) {
+              const vpSnap = await getDoc(doc(db, "profiles", mData.volunteer_id));
+              if (vpSnap.exists()) {
+                profileCache[mData.volunteer_id] = vpSnap.data();
+              }
+            }
+            mData.profiles = profileCache[mData.volunteer_id] || null;
+          }
+          missionsList.push(mData);
+        }
+        inc.missions = missionsList;
+        incList.push(inc);
+      }
+      setAvailableMissions(incList);
+
+      // Fetch my NGO memberships
+      const membershipSnap = await getDocs(
+        query(collection(db, "ngo_members"), where("member_user_id", "==", userId))
+      );
+      setMyNgoIds(membershipSnap.docs.map(doc => doc.data().ngo_user_id));
+
+      // Fetch AI suggestions (notifications)
+      fetchAISuggestions(userId);
+
+      // Fetch My Active Missions and completed ones
+      const myMissionsSnap = await getDocs(
+        query(collection(db, "missions"), where("volunteer_id", "==", userId))
+      );
       
-    if (memberships) {
-      setMyNgoIds(memberships.map((m: any) => m.ngo_user_id));
-    }
+      const activeList: any[] = [];
+      const allMissionsList: any[] = [];
 
-    // Fetch AI suggestions (notifications)
-    fetchAISuggestions(userId);
+      for (const mDoc of myMissionsSnap.docs) {
+        const mData = { id: mDoc.id, ...mDoc.data() } as any;
+        if (mData.incident_id) {
+          const incDoc = await getDoc(doc(db, "incidents", mData.incident_id));
+          if (incDoc.exists()) {
+            mData.incident = incDoc.data();
+          }
+        }
+        allMissionsList.push(mData);
+        if (mData.status !== "Completed") {
+          activeList.push(mData);
+        }
+      }
+      setActiveAssignments(activeList);
 
-    // Fetch My Active Missions
-    const { data: missions } = await supabase
-      .from('missions')
-      .select('*, incident:incidents(*)')
-      .eq('volunteer_id', userId)
-      .neq('status', 'Completed');
-      
-    if (missions) setActiveAssignments(missions);
-
-    // Fetch My Completed Missions for stats
-    const { data: allMissions } = await supabase
-      .from('missions')
-      .select('*, incident:incidents(*)')
-      .eq('volunteer_id', userId);
-      
-    if (allMissions) {
-      const completed = allMissions.filter((m: any) => m.status === 'Completed');
+      // Calculate stats
+      const completed = allMissionsList.filter((m: any) => m.status === 'Completed');
       const missionsComplete = completed.length;
       let peopleHelped = 0;
       completed.forEach((m: any) => {
@@ -132,9 +173,11 @@ function VolunteerDashboardInner() {
         hoursVolunteered: hoursVolunteered.toString(),
         impactScore: impactScore.toString()
       });
+    } catch (error) {
+      console.error("Error fetching volunteer data:", error);
+    } finally {
+      setLoading(false);
     }
-    
-    setLoading(false);
   };
 
   const filteredMissions = useMemo(() => {
@@ -157,20 +200,30 @@ function VolunteerDashboardInner() {
   }, [availableMissions, searchQuery, myNgoIds]);
 
   const fetchAISuggestions = async (userId: string) => {
-    const { data: notifs } = await supabase
-      .from('notifications')
-      .select('*')
-      .eq('user_id', userId)
-      .eq('type', 'ai')
-      .eq('read', false)
-      .order('created_at', { ascending: false })
-      .limit(5);
-    if (notifs) setAiSuggestions(notifs);
+    try {
+      const notifsSnap = await getDocs(
+        query(
+          collection(db, "notifications"),
+          where("user_id", "==", userId),
+          where("type", "==", "ai"),
+          where("read", "==", false),
+          orderBy("created_at", "desc"),
+          limit(5)
+        )
+      );
+      setAiSuggestions(notifsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    } catch (error) {
+      console.error("Error fetching suggestions:", error);
+    }
   };
 
   const dismissSuggestion = async (id: string) => {
-    await supabase.from('notifications').update({ read: true }).eq('id', id);
-    setAiSuggestions(prev => prev.filter(s => s.id !== id));
+    try {
+      await setDoc(doc(db, "notifications", id), { read: true }, { merge: true });
+      setAiSuggestions(prev => prev.filter(s => s.id !== id));
+    } catch (error) {
+      console.error("Error dismissing suggestion:", error);
+    }
   };
 
   // When Deploy is clicked, show AI briefing first
@@ -182,107 +235,122 @@ function VolunteerDashboardInner() {
     const incident = availableMissions.find(m => m.id === incidentId);
     
     // Try to fetch NLP extraction for this incident
-    const { data: extractions } = await supabase
-      .from('nlp_extractions')
-      .select('*')
-      .order('created_at', { ascending: false })
-      .limit(20);
+    try {
+      const nlpSnap = await getDocs(
+        query(collection(db, "nlp_extractions"), orderBy("created_at", "desc"), limit(20))
+      );
+      const extractions = nlpSnap.docs.map(doc => doc.data());
 
-    // Find matching extraction by location
-    let matchedExtraction: any = null;
-    if (extractions && incident) {
-      matchedExtraction = extractions.find((ext: any) => {
-        const loc = ext.extracted_data?.location?.toLowerCase() || "";
-        const incLoc = incident.location?.toLowerCase() || "";
-        return loc === incLoc || loc.includes(incLoc) || incLoc.includes(loc);
-      });
-    }
+      // Find matching extraction by location
+      let matchedExtraction: any = null;
+      if (extractions && incident) {
+        matchedExtraction = extractions.find((ext: any) => {
+          const loc = ext.extracted_data?.location?.toLowerCase() || "";
+          const incLoc = incident.location?.toLowerCase() || "";
+          return loc === incLoc || loc.includes(incLoc) || incLoc.includes(loc);
+        });
+      }
 
-    if (matchedExtraction?.extracted_data) {
-      setAiBriefingData({
-        location: matchedExtraction.extracted_data.location || incident?.location || "Unknown",
-        category: matchedExtraction.extracted_data.category || incident?.type || "General",
-        priority: matchedExtraction.extracted_data.priority || incident?.priority || "NORMAL",
-        affected: matchedExtraction.extracted_data.affected_count || incident?.affected || "Unknown",
-        description: incident?.description || matchedExtraction.extracted_data.summary || "",
-        summary: matchedExtraction.extracted_data.summary || "",
-        recommended_action: matchedExtraction.extracted_data.recommended_action || "Proceed to location and assess the situation",
-        confidence_score: matchedExtraction.extracted_data.confidence_score || 85,
-      });
-    } else {
-      // Use incident data directly
-      setAiBriefingData({
-        location: incident?.location || "Unknown",
-        category: incident?.type || "General",
-        priority: incident?.priority || "NORMAL",
-        affected: incident?.affected || "Unknown",
-        description: incident?.description || "",
-        summary: incident?.description || "AI-analyzed incident requiring immediate response",
-        recommended_action: "Proceed to the incident location, assess the situation, and coordinate with nearby volunteers",
-        confidence_score: 78,
-      });
+      if (matchedExtraction?.extracted_data) {
+        setAiBriefingData({
+          location: matchedExtraction.extracted_data.location || incident?.location || "Unknown",
+          category: matchedExtraction.extracted_data.category || incident?.type || "General",
+          priority: matchedExtraction.extracted_data.priority || incident?.priority || "NORMAL",
+          affected: matchedExtraction.extracted_data.affected_count || incident?.affected || "Unknown",
+          description: incident?.description || matchedExtraction.extracted_data.summary || "",
+          summary: matchedExtraction.extracted_data.summary || "",
+          recommended_action: matchedExtraction.extracted_data.recommended_action || "Proceed to location and assess the situation",
+          confidence_score: matchedExtraction.extracted_data.confidence_score || 85,
+        });
+      } else {
+        // Use incident data directly
+        setAiBriefingData({
+          location: incident?.location || "Unknown",
+          category: incident?.type || "General",
+          priority: incident?.priority || "NORMAL",
+          affected: incident?.affected || "Unknown",
+          description: incident?.description || "",
+          summary: incident?.description || "AI-analyzed incident requiring immediate response",
+          recommended_action: "Proceed to the incident location, assess the situation, and coordinate with nearby volunteers",
+          confidence_score: 78,
+        });
+      }
+    } catch (error) {
+      console.error("Error during deployment load:", error);
+    } finally {
+      setBriefingLoading(false);
     }
-    
-    setBriefingLoading(false);
   };
 
   // Confirm deployment after AI briefing
   const confirmDeploy = async () => {
     if (!pendingDeployId || !user) return;
     
-    // HIGH FIX #5: Prevent duplicate deployments
-    const { data: existing } = await supabase
-      .from('missions')
-      .select('id')
-      .eq('incident_id', pendingDeployId)
-      .eq('volunteer_id', user.id)
-      .maybeSingle();
-    
-    if (existing) {
+    try {
+      // Prevent duplicate deployments
+      const existingSnap = await getDocs(
+        query(
+          collection(db, "missions"),
+          where("incident_id", "==", pendingDeployId),
+          where("volunteer_id", "==", user.uid)
+        )
+      );
+      
+      if (!existingSnap.empty) {
+        setShowAIBriefing(false);
+        setPendingDeployId(null);
+        return; // Already deployed
+      }
+
+      setAcceptedMission(pendingDeployId);
       setShowAIBriefing(false);
-      setPendingDeployId(null);
-      return; // Already deployed
+      
+      // Create mission in Firestore
+      const missionRef = doc(collection(db, "missions"));
+      await setDoc(missionRef, {
+        incident_id: pendingDeployId,
+        volunteer_id: user.uid,
+        status: 'In Progress',
+        created_at: new Date().toISOString()
+      });
+
+      // Update incident status
+      await setDoc(doc(db, "incidents", pendingDeployId), {
+        status: 'In Transit'
+      }, { merge: true });
+      
+      setTimeout(() => {
+        setAcceptedMission(null);
+        setPendingDeployId(null);
+        fetchData(user.uid);
+      }, 1000);
+    } catch (error) {
+      console.error("Error confirming deployment:", error);
     }
-
-    setAcceptedMission(pendingDeployId);
-    setShowAIBriefing(false);
-    
-    // Create mission
-    await supabase.from('missions').insert([{
-      incident_id: pendingDeployId,
-      volunteer_id: user.id,
-      status: 'In Progress'
-    }]);
-
-    // Update incident status
-    await supabase.from('incidents').update({
-      status: 'In Transit'
-    }).eq('id', pendingDeployId);
-    
-    setTimeout(() => {
-      setAcceptedMission(null);
-      setPendingDeployId(null);
-      fetchData(user.id);
-    }, 1000);
   };
   
   const completeMission = async (missionId: string, incidentId: string) => {
     if (!user) return;
     
-    // Mark mission completed
-    await supabase.from('missions').update({
-      status: 'Completed'
-    }).eq('id', missionId);
-    
-    // Mark incident resolved
-    await supabase.from('incidents').update({
-      status: 'Resolved'
-    }).eq('id', incidentId);
-    
-    fetchData(user.id);
+    try {
+      // Mark mission completed
+      await setDoc(doc(db, "missions", missionId), {
+        status: 'Completed'
+      }, { merge: true });
+      
+      // Mark incident resolved
+      await setDoc(doc(db, "incidents", incidentId), {
+        status: 'Resolved'
+      }, { merge: true });
+      
+      fetchData(user.uid);
+    } catch (error) {
+      console.error("Error completing mission:", error);
+    }
   };
 
   const getTimeAgo = (dateString: string) => {
+    if (!dateString) return 'Unknown';
     const date = new Date(dateString);
     const now = new Date();
     const diffInMinutes = Math.floor((now.getTime() - date.getTime()) / 60000);

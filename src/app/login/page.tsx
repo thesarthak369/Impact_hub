@@ -3,33 +3,17 @@
 import { motion } from "framer-motion";
 import { ArrowLeft, Shield } from "lucide-react";
 import Link from "next/link";
-import { createClient } from '@/lib/supabase/client';
+import { useAuth } from "@/components/providers/AuthProvider";
 
 export default function LoginPage() {
-  const supabase = createClient();
-
-  const getURL = () => {
-    let url =
-      typeof window !== 'undefined'
-        ? window.location.origin
-        : process?.env?.NEXT_PUBLIC_SITE_URL ??
-          process?.env?.NEXT_PUBLIC_VERCEL_URL ??
-          'http://localhost:3000';
-      
-    // Make sure to include `https://` when not localhost.
-    url = url.startsWith('http') ? url : `https://${url}`;
-    // Make sure to include a trailing `/`.
-    url = url.charAt(url.length - 1) === '/' ? url : `${url}/`;
-    return url;
-  };
+  const { loginWithGoogle } = useAuth();
 
   const handleGoogleLogin = async () => {
-    await supabase.auth.signInWithOAuth({
-      provider: 'google',
-      options: {
-        redirectTo: `${getURL()}auth/callback`,
-      },
-    });
+    try {
+      await loginWithGoogle();
+    } catch (error) {
+      console.error("Login error:", error);
+    }
   };
 
   return (
@@ -59,9 +43,15 @@ export default function LoginPage() {
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.1 }}
-          className="flex items-center gap-3 mb-8"
+          className="flex items-center gap-3 mb-8 group cursor-pointer"
         >
-          <div className="w-6 h-6"><img src="/logo1.png" alt="Impact Hub Logo" className="w-full h-full object-contain"/></div>
+          <motion.div 
+            className="w-6 h-6"
+            whileHover={{ rotate: 360, scale: 1.15 }}
+            transition={{ type: "spring", stiffness: 200, damping: 15 }}
+          >
+            <img src="/logo1.png" alt="Impact Hub Logo" className="w-full h-full object-contain"/>
+          </motion.div>
           <div>
             <h1 className="text-xl font-bold tracking-tight">Impact Hub</h1>
             <p className="text-[11px] text-accent-dim tracking-wider uppercase">Smart Resource Allocation</p>

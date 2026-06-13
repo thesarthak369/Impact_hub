@@ -8,7 +8,9 @@ import {
   Target, Radio, Navigation2, ArrowRight, Users, Eye
 } from "lucide-react";
 import { useState, useEffect } from "react";
-import { createClient } from "@/lib/supabase/client";
+import { db } from "@/lib/firebase/client";
+import { useAuth } from "@/components/providers/AuthProvider";
+import { collection, query, where, getDocs, getDoc, doc, updateDoc } from "firebase/firestore";
 import Link from "next/link";
 
 interface MatchedMission {
@@ -24,26 +26,43 @@ interface MatchedMission {
   created_at: string;
 }
 
-export default function AIBriefingPage() {
+export default function AIEngineBriefingPage() {
   const [matchedMissions, setMatchedMissions] = useState<MatchedMission[]>([]);
   const [aiSuggestions, setAiSuggestions] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const supabase = createClient();
+  const { user } = useAuth();
 
   useEffect(() => {
     async function fetchMyMissions() {
-      const { data: { user } } = await supabase.auth.getUser();
       if (!user) { setLoading(false); return; }
 
-      const { data: missions } = await supabase
-        .from('missions')
-        .select('*, incident:incidents(*)')
-        .eq('volunteer_id', user.id)
-        .order('created_at', { ascending: false })
-        .limit(20);
+      try {
+        // Fetch missions
+        const missionsQ = query(
+          collection(db, "missions"),
+          where("volunteer_id", "==", user.uid)
+        );
+        const missionsSnap = await getDocs(missionsQ);
+        const missionsRaw = missionsSnap.docs.map(d => ({ id: d.id, ...d.data() } as any));
+        
+        // Sort missions by created_at desc in JS
+        missionsRaw.sort((a: any, b: any) => {
+          const tA = a.created_at ? new Date(a.created_at).getTime() : 0;
+          const tB = b.created_at ? new Date(b.created_at).getTime() : 0;
+          return tB - tA;
+        });
 
-      if (missions) {
-        const mapped: MatchedMission[] = missions.map((m: any) => ({
+        // Resolve incident links
+        const missionsWithIncidents = await Promise.all(missionsRaw.slice(0, 20).map(async (m: any) => {
+          if (!m.incident_id) return { ...m, incident: null };
+          const incSnap = await getDoc(doc(db, "incidents", m.incident_id));
+          return {
+            ...m,
+            incident: incSnap.exists() ? { id: incSnap.id, ...incSnap.data() } : null
+          };
+        }));
+
+        const mapped: MatchedMission[] = missionsWithIncidents.map((m: any) => ({
           id: m.id,
           incident_id: m.incident_id,
           incident_location: m.incident?.location || "Unknown",
@@ -56,32 +75,42 @@ export default function AIBriefingPage() {
           created_at: m.created_at,
         }));
         setMatchedMissions(mapped);
+
+        // Fetch notifications
+        const notifsQ = query(
+          collection(db, "notifications"),
+          where("user_id", "==", user.uid)
+        );
+        const notifsSnap = await getDocs(notifsQ);
+        const notifsRaw = notifsSnap.docs
+          .map(d => ({ id: d.id, ...d.data() } as any))
+          .filter((n: any) => n.type === "ai" && n.read === false);
+        
+        notifsRaw.sort((a: any, b: any) => {
+          const tA = a.created_at ? new Date(a.created_at).getTime() : 0;
+          const tB = b.created_at ? new Date(b.created_at).getTime() : 0;
+          return tB - tA;
+        });
+
+        setAiSuggestions(notifsRaw.slice(0, 5));
+      } catch (err) {
+        console.error("Error loading missions:", err);
+      } finally {
+        setLoading(false);
       }
-
-      const { data: notifs } = await supabase
-        .from('notifications')
-        .select('*')
-        .eq('user_id', user.id)
-        .eq('type', 'ai')
-        .eq('read', false)
-        .order('created_at', { ascending: false })
-        .limit(5);
-      if (notifs) setAiSuggestions(notifs);
-
-      setLoading(false);
     }
     fetchMyMissions();
-  }, [supabase]);
+  }, [user]);
 
   const markMissionInProgress = async (missionId: string, incidentId: string) => {
-    await supabase.from('missions').update({ status: 'In Progress' }).eq('id', missionId);
-    await supabase.from('incidents').update({ status: 'In Transit' }).eq('id', incidentId);
+    await updateDoc(doc(db, "missions", missionId), { status: "In Progress" });
+    await updateDoc(doc(db, "incidents", incidentId), { status: "In Transit" });
     setMatchedMissions(prev => prev.map(m => m.id === missionId ? { ...m, status: 'In Progress' } : m));
   };
 
   const completeMission = async (missionId: string, incidentId: string) => {
-    await supabase.from('missions').update({ status: 'Completed' }).eq('id', missionId);
-    await supabase.from('incidents').update({ status: 'Resolved' }).eq('id', incidentId);
+    await updateDoc(doc(db, "missions", missionId), { status: "Completed" });
+    await updateDoc(doc(db, "incidents", incidentId), { status: "Resolved" });
     setMatchedMissions(prev => prev.map(m => m.id === missionId ? { ...m, status: 'Completed' } : m));
   };
 

@@ -57,6 +57,8 @@ next-env.d.ts
 .supabase-schema.sql*
 .full-supabase-schema.sql*
 .full-supabase-schema-no-real-keys.sql*
+.impacthub-567ce-firebase-adminsdk-fbsvc-fdac2416cb.json
+
 
 FLUTTER_MOBILE_README.md
 
@@ -82,6 +84,6 @@ full-supabase-schema.sql
 nlp_extractions.sql
 supabase-schema.sql
 seed-volunteers.sql
-
+impacthub-567ce-firebase-adminsdk-fbsvc-fdac2416cb.json 
 # Private docs
 CLAUDE.md

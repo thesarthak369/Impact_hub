@@ -8,7 +8,8 @@ import {
   Shield, Sparkles, Eye, ArrowRight
 } from "lucide-react";
 import { useState, useEffect } from "react";
-import { createClient } from "@/lib/supabase/client";
+import { db } from "@/lib/firebase/client";
+import { collection, query, getDocs, onSnapshot } from "firebase/firestore";
 
 interface Incident {
   id: string;
@@ -30,48 +31,53 @@ export default function IncidentsPage() {
   const [search, setSearch] = useState("");
   const [selectedIncident, setSelectedIncident] = useState<Incident | null>(null);
   const [stats, setStats] = useState({ total: 0, critical: 0, active: 0, resolved: 0 });
-  const supabase = createClient();
-
   useEffect(() => {
-    fetchIncidents();
+    const q = query(collection(db, "incidents"));
+    const unsubscribe = onSnapshot(q, async (snapshot) => {
+      const docs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Incident));
+      
+      // Sort docs by created_at descending in JS
+      docs.sort((a, b) => {
+        const timeA = a.created_at ? new Date(a.created_at).getTime() : 0;
+        const timeB = b.created_at ? new Date(b.created_at).getTime() : 0;
+        return timeB - timeA;
+      });
 
-    const channel = supabase
-      .channel('public:incidents_explorer')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'incidents' }, () => {
-        fetchIncidents();
-      })
-      .subscribe();
+      // Fetch NGO names separately
+      const creatorIds = [...new Set(docs.filter(d => d.created_by).map(d => d.created_by))];
+      let ngoMap: Record<string, string> = {};
+      if (creatorIds.length > 0) {
+        try {
+          const profilesSnap = await getDocs(collection(db, "profiles"));
+          profilesSnap.docs.forEach(docSnap => {
+            const p = docSnap.data();
+            if (p.role === "ngo" && creatorIds.includes(docSnap.id)) {
+              ngoMap[docSnap.id] = p.name || p.metadata?.orgName || 'Unknown NGO';
+            }
+          });
+        } catch (err) {
+          console.error("Error fetching creator profiles:", err);
+        }
+      }
 
-    return () => { supabase.removeChannel(channel); };
-  }, [supabase]);
-
-  const fetchIncidents = async () => {
-    const { data, error } = await supabase
-      .from('incidents')
-      .select('*')
-      .order('created_at', { ascending: false });
-
-    if (error) { console.error('Incidents fetch error:', error); setLoading(false); return; }
-    if (!data) { setLoading(false); return; }
-
-    // Fetch NGO names separately
-    const creatorIds = [...new Set(data.filter(d => d.created_by).map(d => d.created_by))];
-    let ngoMap: Record<string, string> = {};
-    if (creatorIds.length > 0) {
-      const { data: profiles } = await supabase.from('profiles').select('id, name').in('id', creatorIds);
-      if (profiles) profiles.forEach((p: any) => { ngoMap[p.id] = p.name || 'Unknown NGO'; });
-    }
-
-    const mapped = data.map((d: any) => ({ ...d, ngo_name: d.created_by ? (ngoMap[d.created_by] || null) : null }));
-    setIncidents(mapped);
-    setStats({
-      total: mapped.length,
-      critical: mapped.filter((i: any) => i.priority === 'CRITICAL').length,
-      active: mapped.filter((i: any) => i.status !== 'Resolved').length,
-      resolved: mapped.filter((i: any) => i.status === 'Resolved').length,
+      const mapped = docs.map((d: any) => ({ ...d, ngo_name: d.created_by ? (ngoMap[d.created_by] || null) : null }));
+      setIncidents(mapped);
+      setStats({
+        total: mapped.length,
+        critical: mapped.filter((i: any) => i.priority === 'CRITICAL').length,
+        active: mapped.filter((i: any) => i.status !== 'Resolved').length,
+        resolved: mapped.filter((i: any) => i.status === 'Resolved').length,
+      });
+      setLoading(false);
+    }, (error) => {
+      console.error("Incidents snapshot error:", error);
+      setLoading(false);
     });
-    setLoading(false);
-  };
+
+    return () => {
+      unsubscribe();
+    };
+  }, []);
 
   const getTimeAgo = (dateString: string) => {
     const d = new Date(dateString);
@@ -118,7 +124,7 @@ export default function IncidentsPage() {
           </div>
           <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-foreground/[0.04] border border-foreground/[0.08] text-xs text-foreground font-medium">
             <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-            Real-time from Supabase
+            Real-time from Firestore
           </div>
         </div>
 

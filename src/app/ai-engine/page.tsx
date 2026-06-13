@@ -4,7 +4,8 @@ import DashboardLayout from "@/components/layout/DashboardLayout";
 import { motion, AnimatePresence } from "framer-motion";
 import { BrainCircuit, Image as ImageIcon, HeartHandshake, Workflow, ArrowRight, CheckCircle2, AlertTriangle, Cpu, Zap, Upload, X, Sparkles, MapPin, XCircle, Database } from "lucide-react";
 import { useState, useEffect, useRef } from "react";
-import { createClient } from "@/lib/supabase/client";
+import { useAuth } from "@/components/providers/AuthProvider";
+import { auth } from "@/lib/firebase/client";
 import { useRouter } from "next/navigation";
 
 interface NlpResult { location: string; resource_needed: string; priority: string; affected_count: string; category: string; summary: string; recommended_action: string; confidence_score: number; volunteers_needed?: string | number; _source?: string; [key: string]: string | number | undefined; }
@@ -14,20 +15,18 @@ interface MatchResult { recommended_volunteers: MatchVolunteer[]; team_compositi
 
 export default function AIEnginePage() {
   const router = useRouter();
-  const supabase = createClient();
+  const { user, role, loading } = useAuth();
   const [roleChecked, setRoleChecked] = useState(false);
 
   useEffect(() => {
-    async function checkRole() {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (user) {
-        const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single();
-        if (profile?.role === 'volunteer') { router.replace('/ai-briefing'); return; }
+    if (!loading) {
+      if (role === 'volunteer') {
+        router.replace('/ai-briefing');
+        return;
       }
       setRoleChecked(true);
     }
-    checkRole();
-  }, [supabase, router]);
+  }, [role, loading, router]);
 
   const [nlpInput, setNlpInput] = useState("");
   const [nlpProcessing, setNlpProcessing] = useState(false);
@@ -61,7 +60,12 @@ export default function AIEnginePage() {
     if (!nlpInput.trim()) return;
     setNlpProcessing(true); setNlpResult(null); setNlpError("");
     try {
-      const res = await fetch("/api/ai/analyze", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: nlpInput }) });
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (auth.currentUser) {
+        const token = await auth.currentUser.getIdToken();
+        headers["Authorization"] = `Bearer ${token}`;
+      }
+      const res = await fetch("/api/ai/analyze", { method: "POST", headers, body: JSON.stringify({ text: nlpInput }) });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || json.details || "Request failed");
       setNlpResult(json.data);
@@ -81,7 +85,14 @@ export default function AIEnginePage() {
       const fd = new FormData();
       if (visionFile) fd.append("image", visionFile);
       fd.append("location", visionLocation.trim());
-      const res = await fetch("/api/ai/vision", { method: "POST", body: fd });
+      
+      const headers: Record<string, string> = {};
+      if (auth.currentUser) {
+        const token = await auth.currentUser.getIdToken();
+        headers["Authorization"] = `Bearer ${token}`;
+      }
+      
+      const res = await fetch("/api/ai/vision", { method: "POST", headers, body: fd });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "Request failed");
       setVisionResult(json.data);
@@ -95,7 +106,14 @@ export default function AIEnginePage() {
       const incident = nlpResult
         ? { location: nlpResult.location, type: nlpResult.category, priority: nlpResult.priority, affected: nlpResult.affected_count }
         : { location: "Sector 7 North", type: "Water Crisis", priority: "CRITICAL", affected: "500 people" };
-      const res = await fetch("/api/ai/match", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ incident }) });
+      
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (auth.currentUser) {
+        const token = await auth.currentUser.getIdToken();
+        headers["Authorization"] = `Bearer ${token}`;
+      }
+      
+      const res = await fetch("/api/ai/match", { method: "POST", headers, body: JSON.stringify({ incident }) });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "Request failed");
       setMatchResult(json.data);

@@ -74,10 +74,14 @@ export default function Footer() {
           <div className="grid grid-cols-2 md:grid-cols-5 gap-10 mb-16">
             {/* Brand Column */}
             <div className="col-span-2">
-              <div className="flex items-center gap-2.5 mb-4">
-                <div className="w-7 h-7 rounded-lg bg-foreground flex items-center justify-center">
-                  <div className="w-2 h-2 bg-background rounded-sm" />
-                </div>
+              <div className="flex items-center gap-2.5 mb-4 group cursor-pointer">
+                <motion.div 
+                  className="w-7 h-7"
+                  whileHover={{ rotate: 360, scale: 1.15 }}
+                  transition={{ type: "spring", stiffness: 200, damping: 15 }}
+                >
+                  <img src="/logo1.png" alt="Impact Hub Logo" className="w-full h-full object-contain" />
+                </motion.div>
                 <span className="font-bold text-lg tracking-tight text-foreground">Impact Hub</span>
               </div>
               <p className="text-sm text-accent-muted leading-relaxed mb-6 max-w-xs">

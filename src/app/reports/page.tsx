@@ -4,7 +4,8 @@ import DashboardLayout from "@/components/layout/DashboardLayout";
 import { motion } from "framer-motion";
 import { BarChart3, TrendingDown, Download, Trophy, Clock, Users, FileText, ArrowUpRight, Activity } from "lucide-react";
 import { useState, useEffect } from "react";
-import { createClient } from "@/lib/supabase/client";
+import { db } from "@/lib/firebase/client";
+import { collection, getDocs } from "firebase/firestore";
 
 interface WeeklyData {
   week: string;
@@ -33,7 +34,6 @@ interface TopVolunteer {
 }
 
 export default function ReportsPage() {
-  const supabase = createClient();
   const [loading, setLoading] = useState(true);
   const [weeklyData, setWeeklyData] = useState<WeeklyData[]>([]);
   const [resourceTypes, setResourceTypes] = useState<ResourceType[]>([]);
@@ -53,31 +53,43 @@ export default function ReportsPage() {
   const fetchAllReportData = async () => {
     try {
       // === 1. Fetch all incidents ===
-      const { data: allIncidents } = await supabase
-        .from('incidents')
-        .select('*')
-        .order('created_at', { ascending: true });
+      const incsSnap = await getDocs(collection(db, "incidents"));
+      const incidents = incsSnap.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() } as any));
+      // Sort incidents by created_at ascending to match original logic
+      incidents.sort((a: any, b: any) => {
+        const tA = a.created_at ? new Date(a.created_at).getTime() : 0;
+        const tB = b.created_at ? new Date(b.created_at).getTime() : 0;
+        return tA - tB;
+      });
 
-      const incidents = allIncidents || [];
       const totalIncidents = incidents.length;
       const resolvedIncidents = incidents.filter(i => i.status === 'Resolved').length;
       const resolutionRate = totalIncidents > 0 ? ((resolvedIncidents / totalIncidents) * 100).toFixed(1) : "0";
 
       // === 2. Fetch all missions ===
-      const { data: allMissions } = await supabase
-        .from('missions')
-        .select('*, incident:incidents(created_at, affected)')
-        .order('created_at', { ascending: true });
+      const missionsSnap = await getDocs(collection(db, "missions"));
+      const missionsRaw = missionsSnap.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() } as any));
+      // Sort missions by created_at ascending
+      missionsRaw.sort((a: any, b: any) => {
+        const tA = a.created_at ? new Date(a.created_at).getTime() : 0;
+        const tB = b.created_at ? new Date(b.created_at).getTime() : 0;
+        return tA - tB;
+      });
 
-      const missions = allMissions || [];
+      // Map incident created_at and affected nested properties for metrics
+      const missions = missionsRaw.map((m: any) => {
+        const inc = incidents.find((i: any) => i.id === m.incident_id);
+        return {
+          ...m,
+          incident: inc ? { created_at: inc.created_at, affected: inc.affected } : null
+        };
+      });
 
       // === 3. Fetch volunteer profiles ===
-      const { data: volunteerProfiles } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('role', 'volunteer');
-
-      const volunteers = volunteerProfiles || [];
+      const profilesSnap = await getDocs(collection(db, "profiles"));
+      const volunteers = profilesSnap.docs
+        .map(docSnap => ({ id: docSnap.id, ...docSnap.data() } as any))
+        .filter((p: any) => p.role === "volunteer");
 
       // === SUMMARY STATS ===
       // Calculate average response time (incident created -> mission created)
@@ -260,7 +272,7 @@ export default function ReportsPage() {
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-end mb-8 gap-4">
           <div>
             <h1 className="text-2xl font-bold mb-1 tracking-tight">Impact Reports</h1>
-            <p className="text-sm text-accent-dim">Analytics and performance metrics — powered by live Supabase data.</p>
+            <p className="text-sm text-accent-dim">Analytics and performance metrics — powered by live Firestore data.</p>
           </div>
           <div className="flex gap-2">
             <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-foreground/[0.04] border border-foreground/[0.08] text-[10px] text-foreground font-bold">
@@ -273,7 +285,7 @@ export default function ReportsPage() {
         {/* Summary Cards */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
           {[
-            { label: "Total Incidents", value: summaryStats.totalIncidents, icon: BarChart3, trend: "From Supabase" },
+            { label: "Total Incidents", value: summaryStats.totalIncidents, icon: BarChart3, trend: "From Firestore" },
             { label: "Resolution Rate", value: summaryStats.resolutionRate, icon: TrendingDown, trend: "Resolved / Total" },
             { label: "Avg Response", value: summaryStats.avgResponse, icon: Clock, trend: "Time to first deploy" },
             { label: "Registered Volunteers", value: summaryStats.activeVolunteers, icon: Users, trend: "Total signed up" },
@@ -380,7 +392,7 @@ export default function ReportsPage() {
             className="xl:col-span-2 rounded-xl bg-foreground/[0.02] border border-foreground/[0.06] overflow-hidden">
             <div className="p-5 border-b border-foreground/[0.04] flex justify-between items-center">
               <h2 className="font-semibold tracking-tight flex items-center gap-2 text-sm"><Trophy size={15} className="text-accent-muted" />Top Volunteers</h2>
-              <span className="text-[9px] bg-foreground/10 px-2 py-0.5 rounded font-mono tracking-widest">FROM SUPABASE</span>
+              <span className="text-[9px] bg-foreground/10 px-2 py-0.5 rounded font-mono tracking-widest">FROM FIRESTORE</span>
             </div>
             {topVolunteers.length > 0 ? (
               <table className="w-full text-sm">

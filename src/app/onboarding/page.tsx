@@ -4,7 +4,9 @@ import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Building2, HandHeart, ArrowRight, Loader2, MapPin, BadgeCheck, Stethoscope, Clock, ShieldAlert, FileText, BriefcaseMedical, CheckCircle2 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { createClient } from '@/lib/supabase/client';
+import { useAuth } from "@/components/providers/AuthProvider";
+import { db } from "@/lib/firebase/client";
+import { doc, setDoc } from "firebase/firestore";
 
 type Role = 'ngo' | 'volunteer' | null;
 
@@ -28,34 +30,21 @@ export default function OnboardingPage() {
   });
 
   const router = useRouter();
-  const supabase = createClient();
-  const [user, setUser] = useState<any>(null);
+  const { user, role, loading: authLoading } = useAuth();
 
   useEffect(() => {
-    async function checkUser() {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) {
-        router.push("/login");
-        return;
-      }
-      setUser(user);
-
-      // Check if they already have a role
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('role')
-        .eq('id', user.id)
-        .single();
-        
-      if (profile?.role) {
-        // Redirect to appropriate dashboard
-        router.push(profile.role === 'ngo' ? '/ngo-dashboard' : '/volunteer-dashboard');
-      } else {
-        setLoading(false);
-      }
+    if (authLoading) return;
+    if (!user) {
+      router.push("/login");
+      return;
     }
-    checkUser();
-  }, [router, supabase]);
+
+    if (role) {
+      router.push(role === 'ngo' ? '/ngo-dashboard' : '/volunteer-dashboard');
+    } else {
+      setLoading(false);
+    }
+  }, [router, user, role, authLoading]);
 
   const handleRoleSelection = (role: 'ngo' | 'volunteer') => {
     setSelectedRole(role);
@@ -70,16 +59,23 @@ export default function OnboardingPage() {
       ? { orgName: formData.orgName, regNumber: formData.regNumber, baseLocation: formData.baseLocation, focusArea: formData.focusArea }
       : { location: formData.location, skills: formData.skills, availability: formData.availability };
 
-    // Update profile
-    await supabase
-      .from('profiles')
-      .upsert({ 
-        id: user.id,
+    try {
+      // Update profile in Firestore
+      const profileRef = doc(db, "profiles", user.uid);
+      await setDoc(profileRef, { 
+        id: user.uid,
+        name: user.displayName || user.email || "Anonymous",
+        avatar_url: user.photoURL || "",
         role: selectedRole,
-        metadata: metadata
-      });
+        metadata: metadata,
+        created_at: new Date().toISOString()
+      }, { merge: true });
       
-    router.push(selectedRole === 'ngo' ? '/ngo-dashboard' : '/volunteer-dashboard');
+      router.push(selectedRole === 'ngo' ? '/ngo-dashboard' : '/volunteer-dashboard');
+    } catch (error) {
+      console.error("Error saving profile:", error);
+      setSaving(false);
+    }
   };
 
   if (loading) {

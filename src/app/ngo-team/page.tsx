@@ -4,7 +4,9 @@ import DashboardLayout from "@/components/layout/DashboardLayout";
 import { motion, AnimatePresence } from "framer-motion";
 import { Users, Crown, UserPlus, Copy, CheckCircle2, Trash2, Shield, Clock, Link2, AlertTriangle, Sparkles, UserCheck, Activity } from "lucide-react";
 import { useState, useEffect } from "react";
-import { createClient } from "@/lib/supabase/client";
+import { db } from "@/lib/firebase/client";
+import { useAuth } from "@/components/providers/AuthProvider";
+import { collection, query, where, getDocs, getDoc, doc, deleteDoc, addDoc } from "firebase/firestore";
 
 function generateCode(): string {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -14,9 +16,7 @@ function generateCode(): string {
 }
 
 export default function NGOTeamPage() {
-  const supabase = createClient();
-  const [user, setUser] = useState<any>(null);
-  const [profile, setProfile] = useState<any>(null);
+  const { user, role, metadata } = useAuth();
   const [members, setMembers] = useState<any[]>([]);
   const [invites, setInvites] = useState<any[]>([]);
   const [deployedVolunteers, setDeployedVolunteers] = useState<any[]>([]);
@@ -26,61 +26,95 @@ export default function NGOTeamPage() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    loadData();
-  }, []);
+    if (user) {
+      loadData();
+    }
+  }, [user]);
 
   const loadData = async () => {
-    const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
-    setUser(user);
 
-    // Load profile
-    const { data: prof } = await supabase.from('profiles').select('*').eq('id', user.id).single();
-    setProfile(prof);
+    try {
+      // Load members
+      const membersQ = query(
+        collection(db, "ngo_members"),
+        where("ngo_user_id", "==", user.uid)
+      );
+      const membersSnap = await getDocs(membersQ);
+      const membersRaw = membersSnap.docs.map(d => ({ id: d.id, ...d.data() } as any));
+      
+      const resolvedMembers = await Promise.all(membersRaw.map(async (nm: any) => {
+        if (!nm.member_user_id) return { ...nm, member: null };
+        const mSnap = await getDoc(doc(db, "profiles", nm.member_user_id));
+        return {
+          ...nm,
+          member: mSnap.exists() ? { id: mSnap.id, ...mSnap.data() } : null
+        };
+      }));
+      
+      // Sort members by joined_at ascending in JS
+      resolvedMembers.sort((a: any, b: any) => {
+        const tA = a.joined_at ? new Date(a.joined_at).getTime() : 0;
+        const tB = b.joined_at ? new Date(b.joined_at).getTime() : 0;
+        return tA - tB;
+      });
+      setMembers(resolvedMembers);
 
-    // Load members
-    const { data: memberData } = await supabase
-      .from('ngo_members')
-      .select('*, member:profiles!ngo_members_member_user_id_fkey(*)')
-      .eq('ngo_user_id', user.id)
-      .order('joined_at', { ascending: true });
-    
-    if (memberData) setMembers(memberData);
+      // Load invite codes
+      const invitesQ = query(
+        collection(db, "ngo_invites"),
+        where("ngo_user_id", "==", user.uid)
+      );
+      const invitesSnap = await getDocs(invitesQ);
+      const invitesRaw = invitesSnap.docs.map(d => ({ id: d.id, ...d.data() } as any));
+      invitesRaw.sort((a: any, b: any) => {
+        const tA = a.created_at ? new Date(a.created_at).getTime() : 0;
+        const tB = b.created_at ? new Date(b.created_at).getTime() : 0;
+        return tB - tA;
+      });
+      setInvites(invitesRaw);
 
-    // Load invite codes
-    const { data: inviteData } = await supabase
-      .from('ngo_invites')
-      .select('*')
-      .eq('ngo_user_id', user.id)
-      .order('created_at', { ascending: false });
-    
-    if (inviteData) setInvites(inviteData);
+      // Load currently deployed volunteers on this NGO's incidents
+      const incsQ = query(
+        collection(db, "incidents"),
+        where("created_by", "==", user.uid)
+      );
+      const incsSnap = await getDocs(incsQ);
+      const activeIncidents = incsSnap.docs
+        .map(d => ({ id: d.id, ...d.data() } as any))
+        .filter(inc => inc.status !== "Resolved");
+      
+      const activeIncIds = activeIncidents.map(inc => inc.id);
 
-    // Load currently deployed volunteers on this NGO's incidents
-    const { data: incidents } = await supabase
-      .from('incidents')
-      .select('id, location, type, missions(id, status, volunteer_id, profiles(*))')
-      .eq('created_by', user.id)
-      .neq('status', 'Resolved');
+      if (activeIncIds.length > 0) {
+        const missionsSnap = await getDocs(collection(db, "missions"));
+        const activeMissions = missionsSnap.docs
+          .map(d => ({ id: d.id, ...d.data() } as any))
+          .filter(m => activeIncIds.includes(m.incident_id) && m.status !== "Completed");
 
-    if (incidents) {
-      const vols: any[] = [];
-      incidents.forEach((inc: any) => {
-        (inc.missions || []).filter((m: any) => m.status !== 'Completed').forEach((m: any) => {
+        const vols: any[] = [];
+        for (const m of activeMissions) {
+          const profileSnap = await getDoc(doc(db, "profiles", m.volunteer_id));
+          const profileData = profileSnap.exists() ? profileSnap.data() as any : null;
+          const inc = activeIncidents.find(i => i.id === m.incident_id);
           vols.push({
             volunteer_id: m.volunteer_id,
-            name: m.profiles?.metadata?.full_name || m.profiles?.name || 'Volunteer',
-            avatar_url: m.profiles?.avatar_url,
-            incident_location: inc.location,
-            incident_type: inc.type,
+            name: profileData?.metadata?.full_name || profileData?.name || 'Volunteer',
+            avatar_url: profileData?.avatar_url,
+            incident_location: inc?.location || 'Unknown',
+            incident_type: inc?.type || 'General',
             status: m.status,
           });
-        });
-      });
-      setDeployedVolunteers(vols);
+        }
+        setDeployedVolunteers(vols);
+      } else {
+        setDeployedVolunteers([]);
+      }
+    } catch (err) {
+      console.error("Error loading NGO team data:", err);
+    } finally {
+      setLoading(false);
     }
-
-    setLoading(false);
   };
 
   const createInvite = async () => {
@@ -90,18 +124,21 @@ export default function NGOTeamPage() {
 
     const code = generateCode();
 
-    const { error: insertErr } = await supabase.from('ngo_invites').insert({
-      ngo_user_id: user.id,
-      code,
-      max_uses: 10,
-    });
-
-    if (insertErr) {
-      setError(insertErr.message);
-    } else {
+    try {
+      await addDoc(collection(db, "ngo_invites"), {
+        ngo_user_id: user.uid,
+        code,
+        max_uses: 10,
+        uses: 0,
+        created_at: new Date().toISOString(),
+        expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
+      });
       loadData();
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setCreating(false);
     }
-    setCreating(false);
   };
 
   const copyCode = (code: string) => {
@@ -112,16 +149,24 @@ export default function NGOTeamPage() {
 
   const removeMember = async (memberId: string) => {
     if (!confirm('Remove this member from your NGO?')) return;
-    await supabase.from('ngo_members').delete().eq('id', memberId);
-    loadData();
+    try {
+      await deleteDoc(doc(db, "ngo_members", memberId));
+      loadData();
+    } catch (err) {
+      console.error("Error removing member:", err);
+    }
   };
 
   const deleteInvite = async (inviteId: string) => {
-    await supabase.from('ngo_invites').delete().eq('id', inviteId);
-    loadData();
+    try {
+      await deleteDoc(doc(db, "ngo_invites", inviteId));
+      loadData();
+    } catch (err) {
+      console.error("Error deleting invite:", err);
+    }
   };
 
-  const orgName = profile?.metadata?.orgName || profile?.name || 'Your NGO';
+  const orgName = metadata?.orgName || user?.displayName || 'Your NGO';
 
   return (
     <DashboardLayout role="ngo">
@@ -157,15 +202,15 @@ export default function NGOTeamPage() {
                 <span className="text-xs font-bold uppercase tracking-widest text-amber-400">Owner</span>
               </div>
               <div className="flex items-center gap-4">
-                {user?.user_metadata?.avatar_url ? (
-                  <img src={user.user_metadata.avatar_url} alt="" className="w-12 h-12 rounded-full border-2 border-amber-500/30" />
+                {user?.photoURL ? (
+                  <img src={user.photoURL} alt="" className="w-12 h-12 rounded-full border-2 border-amber-500/30" />
                 ) : (
                   <div className="w-12 h-12 rounded-full bg-gradient-to-br from-amber-500/30 to-amber-600/30 border-2 border-amber-500/30 flex items-center justify-center">
                     <Crown size={20} className="text-amber-400" />
                   </div>
                 )}
                 <div>
-                  <div className="font-bold text-foreground text-lg">{user?.user_metadata?.full_name || 'Owner'}</div>
+                  <div className="font-bold text-foreground text-lg">{user?.displayName || 'Owner'}</div>
                   <div className="text-xs text-accent-dim">{user?.email}</div>
                   <div className="text-[10px] text-amber-400 mt-0.5 font-medium">{orgName} • Founder</div>
                 </div>

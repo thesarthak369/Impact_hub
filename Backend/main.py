@@ -5,7 +5,9 @@ from pydantic import BaseModel
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
-from supabase import create_client, Client
+import datetime
+import firebase_admin
+from firebase_admin import credentials, firestore
 
 # 1. Load the secrets from your .env file
 load_dotenv()
@@ -20,10 +22,27 @@ client = genai.Client(
     location="us-central1"
 )
 
-# Initialize Supabase Client
-supabase_url: str = os.environ.get("SUPABASE_URL")
-supabase_key: str = os.environ.get("SUPABASE_KEY")
-supabase: Client = create_client(supabase_url, supabase_key)
+# Initialize Firebase Admin
+project_id = os.environ.get("FIREBASE_PROJECT_ID")
+client_email = os.environ.get("FIREBASE_CLIENT_EMAIL")
+private_key = os.environ.get("FIREBASE_PRIVATE_KEY")
+
+if not firebase_admin._apps:
+    if project_id and client_email and private_key:
+        pk = private_key.replace("\\n", "\n")
+        cred = credentials.Certificate({
+            "type": "service_account",
+            "project_id": project_id,
+            "private_key": pk,
+            "client_email": client_email,
+            "token_uri": "https://oauth2.googleapis.com/token",
+        })
+        firebase_admin.initialize_app(cred)
+    else:
+        # Fallback to Application Default Credentials
+        firebase_admin.initialize_app()
+
+db = firestore.client()
 
 # 4. Define what an incoming data payload looks like
 class SMSPayload(BaseModel):
@@ -59,21 +78,27 @@ async def handle_sms(payload: SMSPayload):
         
         structured_data = json.loads(response.text)
         
-        db_response = supabase.table("incidents").insert({
+        # Generate new document ID and save
+        doc_ref = db.collection("incidents").document()
+        incident_id = doc_ref.id
+        
+        doc_ref.set({
+            "id": incident_id,
             "location": structured_data.get("location", "Unknown"),
             "type": structured_data.get("type", "Other"),
             "priority": structured_data.get("priority", "HIGH"),
             "status": "Active",
-            "affected": structured_data.get("affected", "Unknown"),
+            "affected": str(structured_data.get("affected", "Unknown")),
             "description": payload.message,
-            "volunteers_needed": structured_data.get("volunteers_needed", 0),
-            "resources_needed": structured_data.get("resources_needed", "None")
-        }).execute()
+            "volunteers_needed": int(structured_data.get("volunteers_needed", 0)),
+            "resources_needed": structured_data.get("resources_needed", "None"),
+            "created_at": datetime.datetime.utcnow().isoformat() + "Z"
+        })
         
         return {
             "status": "success",
             "extracted_data": structured_data,
-            "database_id": db_response.data[0]["id"] if db_response.data else None
+            "database_id": incident_id
         }
         
     except Exception as e:

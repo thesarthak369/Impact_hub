@@ -56,23 +56,15 @@ export default function PageLoader({ children }: { children: React.ReactNode }) 
                   className="w-16 h-16 rounded-2xl border border-foreground/[0.08]"
                 />
 
-                {/* Inner pulsing square */}
+                {/* Inner pulsing logo */}
                 <motion.div
-                  initial={{ scale: 0, rotate: -45 }}
-                  animate={{ scale: 1, rotate: 0 }}
-                  transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
-                  className="absolute inset-0 flex items-center justify-center"
+                  initial={{ scale: 0 }}
+                  animate={{ scale: [1, 0.88, 1] }}
+                  transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
+                  className="absolute inset-0 flex items-center justify-center pointer-events-none"
                 >
-                  <div className="w-10 h-10 rounded-xl bg-foreground flex items-center justify-center">
-                    <motion.div
-                      animate={{ scale: [1, 0.7, 1] }}
-                      transition={{ duration: 1.5, repeat: Infinity, ease: "easeInOut" }}
-                      className="w-3 h-3 bg-[#060612] rounded-sm"
-                    />
-
-                    <div className="w-16 h-16 flex items-center justify-center"> <img src="/logo1.png" alt="Impact Hub"
-                      className="w-full h-full object-contain"/>
-                    </div>
+                  <div className="w-7 h-7 flex items-center justify-center">
+                    <img src="/logo1.png" alt="Impact Hub" className="w-full h-full object-contain" />
                   </div>
                 </motion.div>
 

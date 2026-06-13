@@ -5,7 +5,7 @@ import { motion, useScroll, useMotionValueEvent, AnimatePresence } from "framer-
 import { Menu, X, ArrowRight, Activity, Map as MapIcon, BrainCircuit, BarChart3, AlertTriangle, Users, LogOut, Moon, Sun, type LucideIcon } from "lucide-react";
 import Link from "next/link";
 import { useRouter, usePathname } from "next/navigation";
-import { createClient } from '@/lib/supabase/client';
+import { useAuth } from "@/components/providers/AuthProvider";
 import { useTheme } from "@/components/providers/ThemeProvider";
 
 interface NavLink {
@@ -45,35 +45,18 @@ export default function Navbar() {
   const [hoveredLink, setHoveredLink] = useState<string | null>(null);
 
   // Auth State
-  const [user, setUser] = useState<any>(null);
-  const [role, setRole] = useState<string | null>(null);
+  const { user, role, logout } = useAuth();
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
-  const supabase = createClient();
   const router = useRouter();
   const { theme, toggleTheme } = useTheme();
 
   const handleSignOut = async () => {
-    await supabase.auth.signOut();
-    setUser(null);
-    setRole(null);
+    await logout();
     setIsDropdownOpen(false);
-    router.push("/login");
   };
 
-  // Re-fetch user on mount and when pathname changes
   const pathname = usePathname();
   const isEmergencyRoute = pathname === "/emergency" || pathname.startsWith("/emergency/");
-  useEffect(() => {
-    async function getUser() {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (user) {
-        setUser(user);
-        const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single();
-        if (profile) setRole(profile.role);
-      }
-    }
-    getUser();
-  }, [supabase, pathname]);
 
   useMotionValueEvent(scrollY, "change", (latest) => {
     setIsScrolled(latest > 30);
@@ -120,8 +103,13 @@ export default function Navbar() {
           <div className={`flex items-center justify-between w-full ${isScrolled ? "px-3" : ""}`}>
             {/* Logo */}
             <Link href="/" className="flex items-center gap-2 group">
-                <div className="w-6 h-6"><img src="/logo1.png" alt="Impact Hub Logo" className="w-full h-full object-contain"/></div>
-         
+              <motion.div 
+                className="w-6 h-6"
+                whileHover={{ rotate: 360, scale: 1.15 }}
+                transition={{ type: "spring", stiffness: 200, damping: 15 }}
+              >
+                <img src="/logo1.png" alt="Impact Hub Logo" className="w-full h-full object-contain"/>
+              </motion.div>
               <span className="font-semibold text-[15px] tracking-tight text-foreground">
                 Impact Hub
               </span>
@@ -193,7 +181,7 @@ export default function Navbar() {
               ) : (
                 <div className="relative flex items-center gap-3">
                   <div className="hidden sm:flex flex-col items-end mr-1">
-                    <span className="text-[11px] font-semibold text-foreground">{user?.user_metadata?.full_name || 'User'}</span>
+                    <span className="text-[11px] font-semibold text-foreground">{user?.displayName || 'User'}</span>
                     <span className="text-[9px] text-accent-muted uppercase tracking-widest">{role || 'Setup Required'}</span>
                   </div>
                   {/* WRAPPER for Hover to prevent gap issues */}
@@ -202,9 +190,9 @@ export default function Navbar() {
                     onMouseEnter={() => setIsDropdownOpen(true)}
                     onMouseLeave={() => setIsDropdownOpen(false)}
                   >
-                    {user?.user_metadata?.avatar_url ? (
+                    {user?.photoURL ? (
                       <img 
-                        src={user.user_metadata.avatar_url} 
+                        src={user.photoURL} 
                         alt="Avatar" 
                         className="w-8 h-8 rounded-full border border-foreground/20 hover:scale-105 transition-transform cursor-pointer relative z-10" 
                       />
@@ -283,13 +271,13 @@ export default function Navbar() {
             >
               {user && (
                 <div className="flex items-center gap-3 mb-5 pb-5 border-b border-foreground/[0.04]">
-                  {user?.user_metadata?.avatar_url ? (
-                    <img src={user.user_metadata.avatar_url} alt="Avatar" className="w-10 h-10 rounded-full border border-foreground/20" />
+                  {user?.photoURL ? (
+                    <img src={user.photoURL} alt="Avatar" className="w-10 h-10 rounded-full border border-foreground/20" />
                   ) : (
                     <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-foreground/40 to-foreground/60 border border-foreground/20" />
                   )}
                   <div className="flex flex-col">
-                    <span className="text-sm font-semibold text-foreground">{user?.user_metadata?.full_name || 'User'}</span>
+                    <span className="text-sm font-semibold text-foreground">{user?.displayName || 'User'}</span>
                     <span className="text-[10px] text-accent-dim uppercase tracking-widest">{role || 'Setup Required'}</span>
                   </div>
                 </div>

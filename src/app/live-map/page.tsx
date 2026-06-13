@@ -5,7 +5,11 @@ import DashboardLayout from "@/components/layout/DashboardLayout";
 import { motion } from "framer-motion";
 import { MapPin, AlertTriangle, CheckCircle2, Clock, Users, Flame, Layers } from "lucide-react";
 import { useState, useEffect, useRef, useMemo } from "react";
-import { createClient } from "@/lib/supabase/client";
+import { db } from "@/lib/firebase/client";
+import { 
+  collection, doc, getDoc, getDocs, query, where, orderBy, 
+  onSnapshot 
+} from "firebase/firestore";
 import { APIProvider, Map, Marker, InfoWindow, useMap, useMapsLibrary } from "@vis.gl/react-google-maps";
 import { MAP_STYLES } from "./map-styles";
 
@@ -145,6 +149,8 @@ function MapInner({ incidents, filter, selectedIncident, setSelectedIncident }: 
   const [geocodeDone, setGeocodeDone] = useState(0);
   const geocodingLibrary = useMapsLibrary('geocoding');
 
+  console.log(`[MAP_RENDER] Incidents count: ${incidents.length}, geocodingLibrary loaded: ${!!geocodingLibrary}`);
+
   // Geocode all incidents whenever they change
   useEffect(() => {
     if (!incidents.length || !geocodingLibrary) return;
@@ -157,13 +163,20 @@ function MapInner({ incidents, filter, selectedIncident, setSelectedIncident }: 
           const key = (inc.location || "").toLowerCase().trim();
           if (!geocodeCache[key]) {
             try {
+              console.log(`[GEOCODER] Starting geocode for: ${inc.location}`);
               const response = await geocoder.geocode({ address: inc.location + ", India" });
+              console.log(`[GEOCODER] Success for ${inc.location}:`, response);
               if (response.results && response.results.length > 0) {
                 const loc = response.results[0].geometry.location;
                 geocodeCache[key] = [loc.lat(), loc.lng()];
+              } else {
+                console.warn(`[GEOCODER] ZERO_RESULTS for ${inc.location}`);
               }
-            } catch (err) {
-              console.warn("Google Geocoding failed for", inc.location, err);
+            } catch (err: any) {
+              console.error(`[GEOCODER] FAILED for ${inc.location}. Error:`, err);
+              if (err?.code === 'REQUEST_DENIED' || err?.message?.includes('Billing')) {
+                console.error("[GEOCODER] CRITICAL: Google Maps API requires a Billing Account with a credit card to use the Geocoding API! See: https://console.cloud.google.com/project/_/billing/enable");
+              }
               // Store fallback so we don't keep trying
               geocodeCache[key] = getFallbackCoords(inc.id ? inc.id.charCodeAt(0) : 0);
             }
@@ -227,57 +240,80 @@ export default function LiveMapPage() {
   const [selectedIncident, setSelectedIncident] = useState<string | null>(null);
   const [incidents, setIncidents] = useState<any[]>([]);
   const [showSidebar, setShowSidebar] = useState(true);
-  const supabase = createClient();
 
   useEffect(() => {
     fetchIncidents();
-    const channel = supabase
-      .channel('public:incidents_map')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'incidents' }, () => {
-        fetchIncidents();
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'missions' }, () => {
-        fetchIncidents();
-      })
-      .subscribe();
-    return () => { supabase.removeChannel(channel); };
-  }, [supabase]);
+    const unsubIncidents = onSnapshot(collection(db, "incidents"), () => {
+      fetchIncidents();
+    });
+    const unsubMissions = onSnapshot(collection(db, "missions"), () => {
+      fetchIncidents();
+    });
+    return () => {
+      unsubIncidents();
+      unsubMissions();
+    };
+  }, []);
 
   const fetchIncidents = async () => {
-    // Fetch incidents with missions and volunteer profiles
-    const { data, error } = await supabase
-      .from('incidents')
-      .select('*, missions(id, volunteer_id, status, profiles(*))')
-      .order('created_at', { ascending: false });
+    try {
+      const incidentsSnap = await getDocs(
+        query(collection(db, "incidents"), orderBy("created_at", "desc"))
+      );
+      const data = incidentsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })) as any[];
+      
+      const creatorIds = [...new Set(data.filter(d => d.created_by).map(d => d.created_by))];
+      let ngoMap: Record<string, string> = {};
+      const profileCache: { [key: string]: any } = {};
 
-    if (error) { console.error('Failed to fetch incidents:', error); return; }
-    if (!data) return;
-
-    // Fetch NGO names separately
-    const creatorIds = [...new Set(data.filter(d => d.created_by).map(d => d.created_by))];
-    let ngoMap: Record<string, string> = {};
-    if (creatorIds.length > 0) {
-      const { data: profiles } = await supabase
-        .from('profiles')
-        .select('id, name, metadata')
-        .in('id', creatorIds);
-      if (profiles) {
-        profiles.forEach((p: any) => { ngoMap[p.id] = p.metadata?.orgName || p.name || 'Unknown NGO'; });
+      for (const creatorId of creatorIds) {
+        if (!profileCache[creatorId]) {
+          const pSnap = await getDoc(doc(db, "profiles", creatorId));
+          if (pSnap.exists()) {
+            profileCache[creatorId] = pSnap.data();
+          }
+        }
+        ngoMap[creatorId] = profileCache[creatorId]?.metadata?.orgName || profileCache[creatorId]?.name || 'Unknown NGO';
       }
-    }
 
-    const mapped = data.map((inc: any) => ({
-      ...inc,
-      ngo_name: inc.created_by ? (ngoMap[inc.created_by] || null) : null,
-      deployed_volunteers: (inc.missions || [])
-        .filter((m: any) => m.status !== 'Completed')
-        .map((m: any) => ({
-          id: m.volunteer_id,
-          name: m.profiles?.metadata?.full_name || m.profiles?.name || m.profiles?.metadata?.orgName || 'Volunteer',
-          avatar_url: m.profiles?.avatar_url || null,
-        }))
-    }));
-    setIncidents(mapped);
+      const mapped: any[] = [];
+      for (const inc of data) {
+        const mSnap = await getDocs(
+          query(collection(db, "missions"), where("incident_id", "==", inc.id))
+        );
+        const missionsList: any[] = [];
+
+        for (const mDoc of mSnap.docs) {
+          const mData = { id: mDoc.id, ...mDoc.data() } as any;
+          if (mData.volunteer_id) {
+            if (!profileCache[mData.volunteer_id]) {
+              const vpSnap = await getDoc(doc(db, "profiles", mData.volunteer_id));
+              if (vpSnap.exists()) {
+                profileCache[mData.volunteer_id] = vpSnap.data();
+              }
+            }
+            mData.profiles = profileCache[mData.volunteer_id] || null;
+          }
+          missionsList.push(mData);
+        }
+
+        mapped.push({
+          ...inc,
+          ngo_name: inc.created_by ? (ngoMap[inc.created_by] || null) : null,
+          deployed_volunteers: missionsList
+            .filter((m: any) => m.status !== 'Completed')
+            .map((m: any) => ({
+              id: m.volunteer_id,
+              name: m.profiles?.metadata?.full_name || m.profiles?.name || m.profiles?.metadata?.orgName || 'Volunteer',
+              avatar_url: m.profiles?.avatar_url || null,
+            }))
+        });
+      }
+      
+      setIncidents(mapped);
+    } catch (error) {
+      console.error('Failed to fetch incidents:', error);
+    }
   };
 
   const filtered = filter === "all" ? incidents : incidents.filter(i => i.priority === filter);
@@ -329,7 +365,7 @@ export default function LiveMapPage() {
           </button>
 
           {/* Heatmap Legend — positioned above bottom nav */}
-          <div className="absolute bottom-4 left-4 z-[1000] flex gap-3">
+          <div className="absolute top-2 right-82 z-[1000] flex gap-3">
             <div className="bg-background/80 backdrop-blur-md border border-foreground/10 rounded-lg p-3 text-xs space-y-1.5">
               <div className="text-accent-dim font-bold uppercase tracking-wider mb-1 flex items-center gap-1.5">
                 <Flame size={10} /> Heatmap Legend

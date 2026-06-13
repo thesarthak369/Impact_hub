@@ -2,7 +2,9 @@
 
 import DashboardLayout from "@/components/layout/DashboardLayout";
 import { useState, useEffect } from "react";
-import { createClient } from "@/lib/supabase/client";
+import { db } from "@/lib/firebase/client";
+import { useAuth } from "@/components/providers/AuthProvider";
+import { collection, query, where, getDocs, getDoc, doc, deleteDoc, updateDoc, writeBatch } from "firebase/firestore";
 import { useRouter } from "next/navigation";
 import { Trash2, AlertTriangle, Users, Building2, ShieldAlert, CheckSquare, Square, X, Edit3, Save, Search, MapPin, BriefcaseMedical, Clock } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -34,46 +36,53 @@ export default function AdminDashboard() {
   const [editingVol, setEditingVol] = useState(false);
   const [volForm, setVolForm] = useState({ location: "", skills: "", availability: "" });
   
-  const supabase = createClient();
+  const { user, role, metadata, loading: authLoading } = useAuth();
   const router = useRouter();
 
   useEffect(() => {
-    checkAuth();
-  }, []);
+    if (!authLoading) {
+      if (!user) {
+        router.push("/dashboard");
+        return;
+      }
+      if (user.email !== "dy3239073@gmail.com" && metadata?.is_admin !== true) {
+        router.push("/dashboard");
+        return;
+      }
+      setIsAdmin(true);
+      fetchData();
+    }
+  }, [user, metadata, authLoading, router]);
 
   // Clear selections when switching tabs
   useEffect(() => {
     setSelectedIds([]);
   }, [activeTab]);
 
-  const checkAuth = async () => {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) {
-      router.push("/dashboard"); 
-      return;
-    }
-    const { data: profile } = await supabase.from('profiles').select('metadata').eq('id', user.id).single();
-    
-    if (user.email !== "dy3239073@gmail.com" && profile?.metadata?.is_admin !== true) {
-      router.push("/dashboard"); 
-      return;
-    }
-    setIsAdmin(true);
-    fetchData();
-  };
-
   const fetchData = async () => {
     setLoading(true);
-    const { data: incs } = await supabase.from('incidents').select('*').order('created_at', { ascending: false });
-    if (incs) setIncidents(incs);
+    try {
+      // 1. Incidents
+      const incsSnap = await getDocs(collection(db, "incidents"));
+      const incs = incsSnap.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() } as any));
+      incs.sort((a: any, b: any) => {
+        const tA = a.created_at ? new Date(a.created_at).getTime() : 0;
+        const tB = b.created_at ? new Date(b.created_at).getTime() : 0;
+        return tB - tA;
+      });
+      setIncidents(incs);
 
-    const { data: ngoProfiles } = await supabase.from('profiles').select('*').eq('role', 'ngo');
-    if (ngoProfiles) setNgos(ngoProfiles);
-
-    const { data: volProfiles } = await supabase.from('profiles').select('*').eq('role', 'volunteer');
-    if (volProfiles) setVolunteers(volProfiles);
-
-    setLoading(false);
+      // 2. Profiles
+      const profilesSnap = await getDocs(collection(db, "profiles"));
+      const profiles = profilesSnap.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() } as any));
+      
+      setNgos(profiles.filter(p => p.role === "ngo"));
+      setVolunteers(profiles.filter(p => p.role === "volunteer"));
+    } catch (err) {
+      console.error("Error fetching admin data:", err);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const toggleSelection = (id: string) => {
@@ -89,38 +98,84 @@ export default function AdminDashboard() {
   const handleBulkDelete = async () => {
     if (!confirm(`Are you sure you want to completely delete ${selectedIds.length} items?`)) return;
     
-    if (activeTab === "emergencies") {
-      setIncidents(incs => incs.filter(i => !selectedIds.includes(i.id)));
-      await supabase.from('missions').delete().in('incident_id', selectedIds);
-      await supabase.from('incidents').delete().in('id', selectedIds);
-    } else if (activeTab === "ngos") {
-      setNgos(n => n.filter(i => !selectedIds.includes(i.id)));
-      await supabase.from('profiles').delete().in('id', selectedIds);
-    } else if (activeTab === "volunteers") {
-      setVolunteers(v => v.filter(i => !selectedIds.includes(i.id)));
-      await supabase.from('profiles').delete().in('id', selectedIds);
+    try {
+      if (activeTab === "emergencies") {
+        setIncidents(incs => incs.filter(i => !selectedIds.includes(i.id)));
+        const batch = writeBatch(db);
+        
+        // Find and delete associated missions
+        const missionsSnap = await getDocs(collection(db, "missions"));
+        missionsSnap.docs.forEach(docSnap => {
+          const m = docSnap.data();
+          if (selectedIds.includes(m.incident_id)) {
+            batch.delete(docSnap.ref);
+          }
+        });
+        
+        selectedIds.forEach(id => {
+          batch.delete(doc(db, "incidents", id));
+        });
+        await batch.commit();
+      } else if (activeTab === "ngos" || activeTab === "volunteers") {
+        if (activeTab === "ngos") {
+          setNgos(n => n.filter(i => !selectedIds.includes(i.id)));
+        } else {
+          setVolunteers(v => v.filter(i => !selectedIds.includes(i.id)));
+        }
+        const batch = writeBatch(db);
+        selectedIds.forEach(id => {
+          batch.delete(doc(db, "profiles", id));
+        });
+        await batch.commit();
+      }
+      setSelectedIds([]);
+    } catch (err) {
+      console.error("Error bulk deleting items:", err);
     }
-    setSelectedIds([]);
   };
 
   const handleBulkResolve = async () => {
     if (activeTab !== "emergencies") return;
     setIncidents(incs => incs.map(i => selectedIds.includes(i.id) ? { ...i, status: "Resolved" } : i));
-    await supabase.from('incidents').update({ status: "Resolved" }).in('id', selectedIds);
-    setSelectedIds([]);
+    try {
+      const batch = writeBatch(db);
+      selectedIds.forEach(id => {
+        batch.update(doc(db, "incidents", id), { status: "Resolved" });
+      });
+      await batch.commit();
+      setSelectedIds([]);
+    } catch (err) {
+      console.error("Error bulk resolving incidents:", err);
+    }
   };
 
   const handleDeleteIncident = async (id: string) => {
     if (!confirm("Are you sure you want to completely delete this incident?")) return;
-    await supabase.from('missions').delete().eq('incident_id', id);
-    await supabase.from('incidents').delete().eq('id', id);
-    fetchData();
+    try {
+      const batch = writeBatch(db);
+      const missionsSnap = await getDocs(collection(db, "missions"));
+      missionsSnap.docs.forEach(docSnap => {
+        const m = docSnap.data();
+        if (m.incident_id === id) {
+          batch.delete(docSnap.ref);
+        }
+      });
+      batch.delete(doc(db, "incidents", id));
+      await batch.commit();
+      fetchData();
+    } catch (err) {
+      console.error("Error deleting incident:", err);
+    }
   };
 
   const handleDeleteProfile = async (id: string) => {
     if (!confirm("Are you sure you want to remove this profile?")) return;
-    await supabase.from('profiles').delete().eq('id', id);
-    fetchData();
+    try {
+      await deleteDoc(doc(db, "profiles", id));
+      fetchData();
+    } catch (err) {
+      console.error("Error deleting profile:", err);
+    }
   };
 
   const handleUpdateStatus = async (id: string, currentStatus: string) => {
@@ -130,34 +185,41 @@ export default function AdminDashboard() {
     else if (currentStatus === "In Transit") nextStatus = "Resolved";
     else return;
     setIncidents(incs => incs.map(i => i.id === id ? { ...i, status: nextStatus } : i));
-    await supabase.from('incidents').update({ status: nextStatus }).eq('id', id);
+    try {
+      await updateDoc(doc(db, "incidents", id), { status: nextStatus });
+    } catch (err) {
+      console.error("Error updating status:", err);
+    }
   };
 
   // Verify & Dispatch: Approve a pending review incident and broadcast to all responders
   const handleVerifyIncident = async (id: string) => {
     setIncidents(incs => incs.map(i => i.id === id ? { ...i, status: "Active" } : i));
-    await supabase.from('incidents').update({ status: "Active" }).eq('id', id);
-
-    // Broadcast to all volunteers and NGOs now that it's verified
     try {
+      await updateDoc(doc(db, "incidents", id), { status: "Active" });
+
+      // Broadcast to all volunteers and NGOs now that it's verified
       const incident = incidents.find(i => i.id === id);
       if (incident) {
-        const { data: responderProfiles } = await supabase
-          .from('profiles')
-          .select('id, role')
-          .in('role', ['volunteer', 'ngo']);
+        const profilesSnap = await getDocs(collection(db, "profiles"));
+        const responderProfiles = profilesSnap.docs
+          .map(d => ({ id: d.id, ...d.data() } as any))
+          .filter(p => p.role === 'volunteer' || p.role === 'ngo');
 
-        const notifications = (responderProfiles || []).map((profile: any) => ({
-          user_id: profile.id,
-          type: "alert" as const,
-          title: `\u2705 VERIFIED: ${incident.type || "Emergency"} in ${incident.location}`,
-          body: `Admin verified and dispatched this emergency. ${incident.description || "Immediate response required."}`,
-          read: false
-        }));
-
-        if (notifications.length > 0) {
-          await supabase.from('notifications').insert(notifications);
-        }
+        const batch = writeBatch(db);
+        responderProfiles.forEach((profile: any) => {
+          const notifRef = doc(collection(db, "notifications"));
+          batch.set(notifRef, {
+            id: notifRef.id,
+            user_id: profile.id,
+            type: "alert",
+            title: `✅ VERIFIED: ${incident.type || "Emergency"} in ${incident.location}`,
+            body: `Admin verified and dispatched this emergency. ${incident.description || "Immediate response required."}`,
+            read: false,
+            created_at: new Date().toISOString()
+          });
+        });
+        await batch.commit();
       }
     } catch (err) {
       console.error("Verify broadcast failed:", err);
@@ -169,11 +231,25 @@ export default function AdminDashboard() {
     if (resolvedIds.length === 0) return alert("No resolved incidents to purge.");
     if (!confirm(`Are you sure you want to permanently delete ${resolvedIds.length} resolved incidents?`)) return;
     setIncidents(incs => incs.filter(i => i.status !== "Resolved"));
-    await supabase.from('missions').delete().in('incident_id', resolvedIds);
-    await supabase.from('incidents').delete().in('id', resolvedIds);
+    try {
+      const batch = writeBatch(db);
+      const missionsSnap = await getDocs(collection(db, "missions"));
+      missionsSnap.docs.forEach(docSnap => {
+        const m = docSnap.data();
+        if (resolvedIds.includes(m.incident_id)) {
+          batch.delete(docSnap.ref);
+        }
+      });
+      resolvedIds.forEach(id => {
+        batch.delete(doc(db, "incidents", id));
+      });
+      await batch.commit();
+    } catch (err) {
+      console.error("Error purging resolved incidents:", err);
+    }
   };
 
-  // Deep Management Actions
+  // Deep NGO Management Actions
   const handleExpandNgo = async (ngo: any) => {
     setExpandedNgo(ngo);
     setEditingNgo(false);
@@ -183,13 +259,25 @@ export default function AdminDashboard() {
       focusArea: ngo.metadata?.focusArea || ""
     });
 
-    const { data: incidentsData } = await supabase.from('incidents').select('*').eq('created_by', ngo.id);
-    setNgoIncidents(incidentsData || []);
+    try {
+      const incsSnap = await getDocs(query(collection(db, "incidents"), where("created_by", "==", ngo.id)));
+      setNgoIncidents(incsSnap.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() })));
 
-    const { data: membersData } = await supabase.from('ngo_members')
-      .select('*, member:profiles!ngo_members_member_user_id_fkey(*)')
-      .eq('ngo_user_id', ngo.id);
-    setNgoMembers(membersData || []);
+      const membersSnap = await getDocs(query(collection(db, "ngo_members"), where("ngo_user_id", "==", ngo.id)));
+      const membersData = membersSnap.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() } as any));
+      
+      const resolvedMembers = await Promise.all(membersData.map(async (nm: any) => {
+        if (!nm.member_user_id) return { ...nm, member: null };
+        const mSnap = await getDoc(doc(db, "profiles", nm.member_user_id));
+        return {
+          ...nm,
+          member: mSnap.exists() ? { id: mSnap.id, ...mSnap.data() } : null
+        };
+      }));
+      setNgoMembers(resolvedMembers);
+    } catch (err) {
+      console.error("Error expanding NGO info:", err);
+    }
   };
 
   const handleSaveNgo = async () => {
@@ -198,7 +286,11 @@ export default function AdminDashboard() {
     setExpandedNgo(updatedNgo);
     setNgos(n => n.map(x => x.id === updatedNgo.id ? updatedNgo : x));
     setEditingNgo(false);
-    await supabase.from('profiles').update({ metadata: newMetadata, name: ngoForm.orgName }).eq('id', updatedNgo.id);
+    try {
+      await updateDoc(doc(db, "profiles", updatedNgo.id), { metadata: newMetadata, name: ngoForm.orgName });
+    } catch (err) {
+      console.error("Error saving NGO profile:", err);
+    }
   };
 
   const handleToggleAdminNgo = async () => {
@@ -207,7 +299,11 @@ export default function AdminDashboard() {
     const updatedNgo = { ...expandedNgo, metadata: newMetadata };
     setExpandedNgo(updatedNgo);
     setNgos(n => n.map(x => x.id === updatedNgo.id ? updatedNgo : x));
-    await supabase.from('profiles').update({ metadata: newMetadata }).eq('id', updatedNgo.id);
+    try {
+      await updateDoc(doc(db, "profiles", updatedNgo.id), { metadata: newMetadata });
+    } catch (err) {
+      console.error("Error toggling NGO admin:", err);
+    }
   };
 
   const handleExpandVol = async (vol: any) => {
@@ -224,10 +320,22 @@ export default function AdminDashboard() {
       availability: vol.metadata?.availability || ""
     });
 
-    const { data: missionsData } = await supabase.from('missions')
-      .select('*, incident:incidents(*)')
-      .eq('volunteer_id', vol.id);
-    setVolMissions(missionsData || []);
+    try {
+      const missionsSnap = await getDocs(query(collection(db, "missions"), where("volunteer_id", "==", vol.id)));
+      const missionsData = missionsSnap.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() } as any));
+      
+      const resolvedMissions = await Promise.all(missionsData.map(async (m: any) => {
+        if (!m.incident_id) return { ...m, incident: null };
+        const incSnap = await getDoc(doc(db, "incidents", m.incident_id));
+        return {
+          ...m,
+          incident: incSnap.exists() ? { id: incSnap.id, ...incSnap.data() } : null
+        };
+      }));
+      setVolMissions(resolvedMissions);
+    } catch (err) {
+      console.error("Error expanding volunteer info:", err);
+    }
   };
 
   const handleSaveVol = async () => {
@@ -237,7 +345,11 @@ export default function AdminDashboard() {
     setExpandedVol(updatedVol);
     setVolunteers(v => v.map(x => x.id === updatedVol.id ? updatedVol : x));
     setEditingVol(false);
-    await supabase.from('profiles').update({ metadata: newMetadata }).eq('id', updatedVol.id);
+    try {
+      await updateDoc(doc(db, "profiles", updatedVol.id), { metadata: newMetadata });
+    } catch (err) {
+      console.error("Error saving volunteer profile:", err);
+    }
   };
 
   const handleToggleAdminVol = async () => {
@@ -246,7 +358,11 @@ export default function AdminDashboard() {
     const updatedVol = { ...expandedVol, metadata: newMetadata };
     setExpandedVol(updatedVol);
     setVolunteers(v => v.map(x => x.id === updatedVol.id ? updatedVol : x));
-    await supabase.from('profiles').update({ metadata: newMetadata }).eq('id', updatedVol.id);
+    try {
+      await updateDoc(doc(db, "profiles", updatedVol.id), { metadata: newMetadata });
+    } catch (err) {
+      console.error("Error toggling volunteer admin:", err);
+    }
   };
 
   // Filtering Logic
@@ -755,7 +871,11 @@ export default function AdminDashboard() {
                             onClick={async () => {
                               if (!confirm("Kick this member from the NGO?")) return;
                               setNgoMembers(prev => prev.filter(x => x.id !== nm.id));
-                              await supabase.from('ngo_members').delete().eq('id', nm.id);
+                              try {
+                                await deleteDoc(doc(db, "ngo_members", nm.id));
+                              } catch (err) {
+                                console.error("Error kicking member:", err);
+                              }
                             }}
                             className="text-red-400/50 hover:text-red-400 p-1.5 hover:bg-red-500/10 rounded transition-colors opacity-0 group-hover:opacity-100"
                             title="Kick Member"
@@ -794,8 +914,19 @@ export default function AdminDashboard() {
                             if (!confirm("Delete this incident?")) return;
                             setNgoIncidents(prev => prev.filter(x => x.id !== inc.id));
                             setIncidents(prev => prev.filter(x => x.id !== inc.id));
-                            await supabase.from('missions').delete().eq('incident_id', inc.id);
-                            await supabase.from('incidents').delete().eq('id', inc.id);
+                            try {
+                              const batch = writeBatch(db);
+                              const missionsSnap = await getDocs(collection(db, "missions"));
+                              missionsSnap.docs.forEach(docSnap => {
+                                if (docSnap.data().incident_id === inc.id) {
+                                  batch.delete(docSnap.ref);
+                                }
+                              });
+                              batch.delete(doc(db, "incidents", inc.id));
+                              await batch.commit();
+                            } catch (err) {
+                              console.error("Error deleting incident:", err);
+                            }
                           }}
                           className="text-red-400/50 hover:text-red-400 p-1.5 hover:bg-red-500/10 rounded transition-colors opacity-0 group-hover:opacity-100"
                           title="Delete Incident"

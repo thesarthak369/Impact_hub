@@ -76,7 +76,7 @@ export default function RoadmapSection() {
             <span className="text-gradient-hero font-serif italic font-light">Response</span>
           </h2>
           <p className="text-accent-muted text-sm tracking-wide uppercase font-semibold">
-            Powered by Supabase
+            Powered by Firebase
           </p>
         </div>
 

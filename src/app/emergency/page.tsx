@@ -1,6 +1,7 @@
 "use client";
 
-import { createClient } from "@/lib/supabase/client";
+import { auth, db } from "@/lib/firebase/client";
+import { collection, query, orderBy, limit, onSnapshot } from "firebase/firestore";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   AlertTriangle,
@@ -71,7 +72,7 @@ const getTimeAgo = (dateString: string) => {
 };
 
 export default function EmergencyPage() {
-  const supabase = createClient();
+
   const [mode, setMode] = useState<ReportMode>("text");
   const [location, setLocation] = useState("");
   const [reporterName, setReporterName] = useState("");
@@ -90,34 +91,29 @@ export default function EmergencyPage() {
   const recognitionRef = useRef<any>(null);
 
   useEffect(() => {
-    async function loadIncidents() {
-      const { data } = await supabase
-        .from("incidents")
-        .select("id, location, type, priority, status, description, created_at")
-        .neq("status", "Resolved")
-        .order("created_at", { ascending: false })
-        .limit(6);
+    const q = query(
+      collection(db, "incidents"),
+      orderBy("created_at", "desc"),
+      limit(30)
+    );
 
-      if (data) {
-        setRecentIncidents(data as IncidentSummary[]);
-      }
-
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const data = snapshot.docs
+        .map(doc => ({ id: doc.id, ...doc.data() } as IncidentSummary))
+        .filter(inc => inc.status !== "Resolved")
+        .slice(0, 6);
+      
+      setRecentIncidents(data);
       setLoadingRecent(false);
-    }
-
-    loadIncidents();
-
-    const channel = supabase
-      .channel("public:emergency_incidents")
-      .on("postgres_changes", { event: "*", schema: "public", table: "incidents" }, () => {
-        loadIncidents();
-      })
-      .subscribe();
+    }, (error) => {
+      console.error("Error loading incidents:", error);
+      setLoadingRecent(false);
+    });
 
     return () => {
-      supabase.removeChannel(channel);
+      unsubscribe();
     };
-  }, [supabase]);
+  }, []);
 
   useEffect(() => {
     if (!imageFile) {
@@ -221,6 +217,12 @@ export default function EmergencyPage() {
         timeStyle: "short",
       });
 
+      const headers: Record<string, string> = {};
+      if (auth.currentUser) {
+        const token = await auth.currentUser.getIdToken();
+        headers["Authorization"] = `Bearer ${token}`;
+      }
+
       let response: Response;
 
       if (mode === "image" && imageFile) {
@@ -233,12 +235,16 @@ export default function EmergencyPage() {
 
         response = await fetch("/api/ai/vision", {
           method: "POST",
+          headers,
           body: formData,
         });
       } else {
         response = await fetch("/api/ai/analyze", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            ...headers,
+            "Content-Type": "application/json",
+          },
           body: JSON.stringify({
             text: incidentText,
             reporter_name: reporterName.trim(),
@@ -267,17 +273,6 @@ export default function EmergencyPage() {
           confidence_score: result.data.confidence_score ?? 0,
           verification_status: result.data.verification_status ?? "auto_verified",
         });
-      }
-
-      const { data } = await supabase
-        .from("incidents")
-        .select("id, location, type, priority, status, description, created_at")
-        .neq("status", "Resolved")
-        .order("created_at", { ascending: false })
-        .limit(6);
-
-      if (data) {
-        setRecentIncidents(data as IncidentSummary[]);
       }
 
       if (result?.data?.summary) {

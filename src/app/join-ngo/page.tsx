@@ -5,10 +5,12 @@ import { motion, AnimatePresence } from "framer-motion";
 import { UserPlus, CheckCircle2, AlertTriangle, ArrowRight, Shield, Sparkles, Users } from "lucide-react";
 import { useState, useEffect, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
-import { createClient } from "@/lib/supabase/client";
+import { db } from "@/lib/firebase/client";
+import { useAuth } from "@/components/providers/AuthProvider";
+import { collection, query, where, getDocs, getDoc, doc, addDoc, updateDoc } from "firebase/firestore";
 
 function JoinNGOContent() {
-  const supabase = createClient();
+  const { user } = useAuth();
   const router = useRouter();
   const searchParams = useSearchParams();
   const prefillCode = searchParams?.get("code") || "";
@@ -24,83 +26,87 @@ function JoinNGOContent() {
     setLoading(true);
     setError("");
 
-    const { data: { user } } = await supabase.auth.getUser();
     if (!user) {
       setError("You must be logged in to join an NGO.");
       setLoading(false);
       return;
     }
 
-    // Find invite
-    const { data: invite, error: invErr } = await supabase
-      .from('ngo_invites')
-      .select('*, ngo:profiles!ngo_invites_ngo_user_id_fkey(*)')
-      .eq('code', code.toUpperCase().trim())
-      .single();
+    try {
+      // Find invite
+      const invitesQ = query(
+        collection(db, "ngo_invites"),
+        where("code", "==", code.toUpperCase().trim())
+      );
+      const invitesSnap = await getDocs(invitesQ);
+      if (invitesSnap.empty) {
+        setError("Invalid invite code. Please check and try again.");
+        setLoading(false);
+        return;
+      }
+      
+      const inviteDoc = invitesSnap.docs[0];
+      const invite = { id: inviteDoc.id, ...inviteDoc.data() as any };
 
-    if (invErr || !invite) {
-      setError("Invalid invite code. Please check and try again.");
+      // Load NGO profile
+      const ngoDoc = await getDoc(doc(db, "profiles", invite.ngo_user_id));
+      const ngoProfile = ngoDoc.exists() ? ngoDoc.data() as any : null;
+
+      // Check expiry
+      if (invite.expires_at && new Date(invite.expires_at) < new Date()) {
+        setError("This invite code has expired.");
+        setLoading(false);
+        return;
+      }
+
+      // Check usage
+      if ((invite.uses || 0) >= (invite.max_uses || 10)) {
+        setError("This invite code has reached its maximum uses.");
+        setLoading(false);
+        return;
+      }
+
+      // Check if already a member
+      const memberQ = query(
+        collection(db, "ngo_members"),
+        where("ngo_user_id", "==", invite.ngo_user_id),
+        where("member_user_id", "==", user.uid)
+      );
+      const memberSnap = await getDocs(memberQ);
+      if (!memberSnap.empty) {
+        setError("You are already a member of this NGO.");
+        setLoading(false);
+        return;
+      }
+
+      // Can't join own NGO
+      if (invite.ngo_user_id === user.uid) {
+        setError("You can't join your own NGO — you're already the owner!");
+        setLoading(false);
+        return;
+      }
+
+      // Add member
+      await addDoc(collection(db, "ngo_members"), {
+        ngo_user_id: invite.ngo_user_id,
+        member_user_id: user.uid,
+        role: 'member',
+        joined_at: new Date().toISOString()
+      });
+
+      // Increment usage
+      await updateDoc(doc(db, "ngo_invites", invite.id), { uses: (invite.uses || 0) + 1 });
+
+      setNgoInfo({
+        name: ngoProfile?.metadata?.orgName || ngoProfile?.name || 'NGO',
+        avatar: ngoProfile?.avatar_url,
+      });
+      setSuccess(true);
+    } catch (err: any) {
+      setError(err.message || "An error occurred while joining the NGO.");
+    } finally {
       setLoading(false);
-      return;
     }
-
-    // Check expiry
-    if (new Date(invite.expires_at) < new Date()) {
-      setError("This invite code has expired.");
-      setLoading(false);
-      return;
-    }
-
-    // Check usage
-    if (invite.uses >= invite.max_uses) {
-      setError("This invite code has reached its maximum uses.");
-      setLoading(false);
-      return;
-    }
-
-    // Check if already a member
-    const { data: existing } = await supabase
-      .from('ngo_members')
-      .select('id')
-      .eq('ngo_user_id', invite.ngo_user_id)
-      .eq('member_user_id', user.id)
-      .maybeSingle();
-
-    if (existing) {
-      setError("You are already a member of this NGO.");
-      setLoading(false);
-      return;
-    }
-
-    // Can't join own NGO
-    if (invite.ngo_user_id === user.id) {
-      setError("You can't join your own NGO — you're already the owner!");
-      setLoading(false);
-      return;
-    }
-
-    // Add member
-    const { error: memberErr } = await supabase.from('ngo_members').insert({
-      ngo_user_id: invite.ngo_user_id,
-      member_user_id: user.id,
-      role: 'member',
-    });
-
-    if (memberErr) {
-      setError(memberErr.message);
-      setLoading(false);
-      return;
-    }
-
-    // Increment usage
-    await supabase.from('ngo_invites').update({ uses: invite.uses + 1 }).eq('id', invite.id);
-
-    setNgoInfo({
-      name: invite.ngo?.metadata?.orgName || invite.ngo?.name || 'NGO',
-      avatar: invite.ngo?.avatar_url,
-    });
-    setSuccess(true);
-    setLoading(false);
   };
 
   return (

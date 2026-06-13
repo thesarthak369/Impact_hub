@@ -4,7 +4,9 @@ import DashboardLayout from "@/components/layout/DashboardLayout";
 import { motion } from "framer-motion";
 import { Bell, CheckCircle2, AlertTriangle, BrainCircuit, Users, MapPin, Clock, Check, Trash2 } from "lucide-react";
 import { useState, useEffect } from "react";
-import { createClient } from "@/lib/supabase/client";
+import { db } from "@/lib/firebase/client";
+import { useAuth } from "@/components/providers/AuthProvider";
+import { collection, query, where, onSnapshot, writeBatch, doc, updateDoc } from "firebase/firestore";
 
 interface Notification {
   id: string;
@@ -39,64 +41,87 @@ export default function NotificationsPage() {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [filter, setFilter] = useState<string>("all");
   const [loading, setLoading] = useState(true);
-  const supabase = createClient();
-  const [user, setUser] = useState<any>(null);
+  const { user } = useAuth();
 
   useEffect(() => {
-    async function fetchNotifications() {
-      const { data: { user } } = await supabase.auth.getUser();
-      setUser(user);
-      if (user) {
-        const { data } = await supabase
-          .from('notifications')
-          .select('*')
-          .eq('user_id', user.id)
-          .order('created_at', { ascending: false });
-        
-        if (data) {
-          const mapped = data.map((n: any) => ({
-            id: n.id,
-            type: n.type || 'system',
-            title: n.title,
-            body: n.body,
-            time: getTimeAgo(n.created_at),
-            read: n.read,
-            created_at: n.created_at
-          }));
-          setNotifications(mapped);
-        }
-      }
+    if (!user) {
       setLoading(false);
+      return;
     }
-    fetchNotifications();
 
-    const channel = supabase
-      .channel('public:notifications')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'notifications' }, () => {
-        fetchNotifications();
-      })
-      .subscribe();
+    const q = query(
+      collection(db, "notifications"),
+      where("user_id", "==", user.uid)
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const docs = snapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() } as any));
+      
+      // Sort docs by created_at descending in JS
+      docs.sort((a, b) => {
+        const timeA = a.created_at ? new Date(a.created_at).getTime() : 0;
+        const timeB = b.created_at ? new Date(b.created_at).getTime() : 0;
+        return timeB - timeA;
+      });
+
+      const mapped = docs.map((n: any) => ({
+        id: n.id,
+        type: n.type || 'system',
+        title: n.title,
+        body: n.body,
+        time: getTimeAgo(n.created_at),
+        read: n.read,
+        created_at: n.created_at
+      }));
+      setNotifications(mapped);
+      setLoading(false);
+    }, (error) => {
+      console.error("Notifications snapshot error:", error);
+      setLoading(false);
+    });
 
     return () => {
-      supabase.removeChannel(channel);
+      unsubscribe();
     };
-  }, [supabase]);
+  }, [user]);
 
   const markRead = async (id: string) => {
     setNotifications(n => n.map(x => x.id === id ? { ...x, read: true } : x));
-    await supabase.from('notifications').update({ read: true }).eq('id', id);
+    try {
+      await updateDoc(doc(db, "notifications", id), { read: true });
+    } catch (err) {
+      console.error("Error marking notification read:", err);
+    }
   };
   
   const markAllRead = async () => {
     setNotifications(n => n.map(x => ({ ...x, read: true })));
-    if (user) await supabase.from('notifications').update({ read: true }).eq('user_id', user.id);
+    if (!user) return;
+    try {
+      const batch = writeBatch(db);
+      notifications.forEach(n => {
+        if (!n.read) {
+          batch.update(doc(db, "notifications", n.id), { read: true });
+        }
+      });
+      await batch.commit();
+    } catch (err) {
+      console.error("Error marking all read:", err);
+    }
   };
   
   const clearRead = async () => {
     const toDelete = notifications.filter(x => x.read).map(x => x.id);
     setNotifications(n => n.filter(x => !x.read));
-    if (toDelete.length > 0) {
-      await supabase.from('notifications').delete().in('id', toDelete);
+    if (toDelete.length === 0) return;
+    try {
+      const batch = writeBatch(db);
+      toDelete.forEach(id => {
+        batch.delete(doc(db, "notifications", id));
+      });
+      await batch.commit();
+    } catch (err) {
+      console.error("Error clearing notifications:", err);
     }
   };
   

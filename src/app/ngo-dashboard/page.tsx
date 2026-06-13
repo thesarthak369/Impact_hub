@@ -2,10 +2,28 @@
 
 import DashboardLayout from "@/components/layout/DashboardLayout";
 import { motion, AnimatePresence } from "framer-motion";
-import { AlertTriangle, FileText, MapPin, Clock, CheckCircle2, Upload, Send, TrendingUp, Activity, Cpu, Sparkles, BrainCircuit, XCircle, Trash2, Users } from "lucide-react";
+import { AlertTriangle, FileText, MapPin, Clock, CheckCircle2, Upload, Send, TrendingUp, Activity, Cpu, Sparkles, BrainCircuit, XCircle, Trash2, Users, Edit3, Eye, X } from "lucide-react";
 import { useState, useEffect, useMemo, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
-import { createClient } from "@/lib/supabase/client";
+import { useAuth } from "@/components/providers/AuthProvider";
+import { db } from "@/lib/firebase/client";
+import { 
+  collection, doc, getDoc, getDocs, query, where, orderBy, limit, 
+  onSnapshot, deleteDoc 
+} from "firebase/firestore";
+
+interface AIPreviewData {
+  location: string;
+  category: string;
+  priority: string;
+  affected_count: string;
+  summary: string;
+  recommended_action: string;
+  resource_needed: string;
+  volunteers_needed: string;
+  confidence_score: number;
+  ai_verified: boolean;
+}
 
 function NGODashboardInner() {
   const [reportText, setReportText] = useState("");
@@ -20,87 +38,151 @@ function NGODashboardInner() {
     avgResponse: "0m",
   });
   
+  // Preview/Edit state
+  const [previewData, setPreviewData] = useState<AIPreviewData | null>(null);
+  const [isConfirming, setIsConfirming] = useState(false);
+  
   const searchParams = useSearchParams();
   const searchQuery = searchParams?.get("q")?.toLowerCase() || "";
-  const supabase = createClient();
+  const { user } = useAuth();
 
   useEffect(() => {
+    if (!user) return;
+    
     fetchData();
     
     // Set up realtime subscriptions
-    const channel = supabase
-      .channel('public:incidents')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'incidents' }, () => {
-        fetchData();
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'nlp_extractions' }, () => {
-        fetchData();
-      })
-      .subscribe();
+    const unsubscribeIncidents = onSnapshot(collection(db, "incidents"), () => {
+      fetchData();
+    });
+    const unsubscribeExtractions = onSnapshot(collection(db, "nlp_extractions"), () => {
+      fetchData();
+    });
       
     return () => {
-      supabase.removeChannel(channel);
+      unsubscribeIncidents();
+      unsubscribeExtractions();
     };
-  }, []);
+  }, [user]);
 
   const fetchData = async () => {
-    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
     
-    if (user) {
+    try {
       // Fetch incidents for this user with deployed volunteers
-      const { data: incData } = await supabase
-        .from('incidents')
-        .select('*, profiles(*), missions(id, volunteer_id, status, profiles(*))')
-        .eq('created_by', user.id)
-        .order('created_at', { ascending: false })
-        .limit(50);
+      const incidentsQuery = query(
+        collection(db, "incidents"),
+        where("created_by", "==", user.uid),
+        orderBy("created_at", "desc"),
+        limit(50)
+      );
+      const incSnap = await getDocs(incidentsQuery);
+      
+      const incList: any[] = [];
+      const profileCache: { [key: string]: any } = {};
+
+      for (const incidentDoc of incSnap.docs) {
+        const inc = { id: incidentDoc.id, ...incidentDoc.data() } as any;
         
-      if (incData) setIncidents(incData);
+        // Fetch creator profile
+        if (inc.created_by) {
+          if (!profileCache[inc.created_by]) {
+            const pSnap = await getDoc(doc(db, "profiles", inc.created_by));
+            if (pSnap.exists()) {
+              profileCache[inc.created_by] = pSnap.data();
+            }
+          }
+          inc.profiles = profileCache[inc.created_by] || null;
+        }
+
+        // Fetch missions for this incident
+        const missionsQuery = query(
+          collection(db, "missions"),
+          where("incident_id", "==", incidentDoc.id)
+        );
+        const mSnap = await getDocs(missionsQuery);
+        const missionsList: any[] = [];
+
+        for (const mDoc of mSnap.docs) {
+          const mData = { id: mDoc.id, ...mDoc.data() } as any;
+          
+          // Fetch volunteer profile
+          if (mData.volunteer_id) {
+            if (!profileCache[mData.volunteer_id]) {
+              const vpSnap = await getDoc(doc(db, "profiles", mData.volunteer_id));
+              if (vpSnap.exists()) {
+                profileCache[mData.volunteer_id] = vpSnap.data();
+              }
+            }
+            mData.profiles = profileCache[mData.volunteer_id] || null;
+          }
+          missionsList.push(mData);
+        }
+        inc.missions = missionsList;
+        incList.push(inc);
+      }
+      setIncidents(incList);
 
       // Fetch extractions for this user
-      const { data: extData } = await supabase
-        .from('nlp_extractions')
-        .select('*')
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: false })
-        .limit(5);
-        
-      if (extData) setExtractions(extData);
-    }
-    
-    // Fetch stats
-    const { data: activeMissions } = await supabase.from('missions').select('volunteer_id').neq('status', 'Completed');
-    const volunteersActive = activeMissions ? new Set(activeMissions.map(m => m.volunteer_id)).size : 0;
-    
-    // Calculate avg response
-    const { data: recentMissions } = await supabase
-      .from('missions')
-      .select('created_at, incident:incidents(created_at)')
-      .order('created_at', { ascending: false })
-      .limit(20);
-    
-    let avgResponseStr = "—";
-    if (recentMissions && recentMissions.length > 0) {
-      let total = 0;
-      let count = 0;
-      recentMissions.forEach((m: any) => {
-        if (m.incident?.created_at && m.created_at) {
-          const diff = (new Date(m.created_at).getTime() - new Date(m.incident.created_at).getTime()) / 60000;
-          if (diff > 0 && diff < 1440) {
-            total += diff;
-            count++;
+      const extQuery = query(
+        collection(db, "nlp_extractions"),
+        where("user_id", "==", user.uid),
+        orderBy("created_at", "desc"),
+        limit(5)
+      );
+      const extSnap = await getDocs(extQuery);
+      const extList = extSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setExtractions(extList);
+      
+      // Fetch stats
+      const missionsSnap = await getDocs(collection(db, "missions"));
+      const activeMissions = missionsSnap.docs
+        .map(doc => doc.data())
+        .filter(m => m.status !== "Completed");
+      const volunteersActive = new Set(activeMissions.map(m => m.volunteer_id)).size;
+      
+      // Calculate avg response
+      const recentMissionsSnap = await getDocs(
+        query(collection(db, "missions"), orderBy("created_at", "desc"), limit(20))
+      );
+      
+      const recentMissionsList: any[] = [];
+      for (const mDoc of recentMissionsSnap.docs) {
+        const mData = { id: mDoc.id, ...mDoc.data() } as any;
+        if (mData.incident_id) {
+          const incDoc = await getDoc(doc(db, "incidents", mData.incident_id));
+          if (incDoc.exists()) {
+            mData.incident = incDoc.data();
           }
         }
-      });
-      if (count > 0) avgResponseStr = `${(total / count).toFixed(1)}m`;
-    }
+        recentMissionsList.push(mData);
+      }
+      
+      let avgResponseStr = "—";
+      if (recentMissionsList.length > 0) {
+        let total = 0;
+        let count = 0;
+        recentMissionsList.forEach((m: any) => {
+          if (m.incident?.created_at && m.created_at) {
+            const diff = (new Date(m.created_at).getTime() - new Date(m.incident.created_at).getTime()) / 60000;
+            if (diff > 0 && diff < 1440) {
+              total += diff;
+              count++;
+            }
+          }
+        });
+        if (count > 0) avgResponseStr = `${(total / count).toFixed(1)}m`;
+      }
 
-    setStats({
-      volunteersActive: volunteersActive.toString(),
-      avgResponse: avgResponseStr,
-    });
-    
-    setLoading(false);
+      setStats({
+        volunteersActive: volunteersActive.toString(),
+        avgResponse: avgResponseStr,
+      });
+    } catch (error) {
+      console.error("Error fetching data:", error);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const filteredIncidents = useMemo(() => {
@@ -112,6 +194,7 @@ function NGODashboardInner() {
     );
   }, [incidents, searchQuery]);
 
+  // STEP 1: Send to AI for preview (does NOT save to database)
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!reportText.trim()) return;
@@ -120,20 +203,21 @@ function NGODashboardInner() {
     setSubmitError("");
     
     try {
-      // 1. Submit to our AI Analysis API
+      const idToken = await user?.getIdToken();
       const response = await fetch('/api/ai/analyze', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: reportText })
+        headers: { 
+          'Content-Type': 'application/json',
+          ...(idToken ? { 'Authorization': `Bearer ${idToken}` } : {})
+        },
+        body: JSON.stringify({ text: reportText, preview_only: true })
       });
       
       const aiData = await response.json();
       
-      if (response.ok) {
-        setSubmitted(true);
-        setReportText("");
-        setTimeout(() => setSubmitted(false), 3000);
-        fetchData(); // Refresh immediately after submission
+      if (response.ok && aiData.data) {
+        // Show the editable preview modal
+        setPreviewData(aiData.data);
       } else {
         setSubmitError(aiData.error || aiData.details || "AI processing failed. Please try again.");
       }
@@ -145,17 +229,69 @@ function NGODashboardInner() {
     }
   };
 
+  // STEP 2: Confirm and post (saves the edited data to database)
+  const handleConfirmPost = async () => {
+    if (!previewData) return;
+    
+    setIsConfirming(true);
+    setSubmitError("");
+    
+    try {
+      const idToken = await user?.getIdToken();
+      const response = await fetch('/api/ai/analyze', {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          ...(idToken ? { 'Authorization': `Bearer ${idToken}` } : {})
+        },
+        body: JSON.stringify({ 
+          text: reportText, 
+          edited_data: previewData 
+        })
+      });
+      
+      const aiData = await response.json();
+      
+      if (response.ok) {
+        setSubmitted(true);
+        setReportText("");
+        setPreviewData(null);
+        setTimeout(() => setSubmitted(false), 3000);
+        fetchData();
+      } else {
+        setSubmitError(aiData.error || aiData.details || "Failed to post. Please try again.");
+      }
+    } catch (err) {
+      console.error("Error confirming:", err);
+      setSubmitError("Network error — check your connection and try again.");
+    } finally {
+      setIsConfirming(false);
+    }
+  };
+
   const deleteIncident = async (id: string) => {
     if (!confirm('Delete this incident? This action cannot be undone.')) return;
-    // Delete associated missions first
-    await supabase.from('missions').delete().eq('incident_id', id);
-    // Delete the incident
-    await supabase.from('incidents').delete().eq('id', id);
-    // Refresh data
-    fetchData();
+    
+    try {
+      // Delete associated missions first
+      const missionsQuery = query(collection(db, "missions"), where("incident_id", "==", id));
+      const mSnap = await getDocs(missionsQuery);
+      for (const mDoc of mSnap.docs) {
+        await deleteDoc(mDoc.ref);
+      }
+      
+      // Delete the incident
+      await deleteDoc(doc(db, "incidents", id));
+      
+      // Refresh data
+      fetchData();
+    } catch (error) {
+      console.error("Error deleting incident:", error);
+    }
   };
 
   const getTimeAgo = (dateString: string) => {
+    if (!dateString) return 'Unknown';
     const date = new Date(dateString);
     const now = new Date();
     const diffInMinutes = Math.floor((now.getTime() - date.getTime()) / 60000);
@@ -247,11 +383,11 @@ function NGODashboardInner() {
                   className="w-full h-12 rounded-xl bg-foreground text-background font-bold text-sm flex items-center justify-center gap-2 hover:bg-foreground/80 hover:shadow-[0_0_20px_var(--shimmer-c)] active:scale-[0.98] transition-all disabled:opacity-30 disabled:cursor-not-allowed group"
                 >
                   {isSubmitting ? (
-                    <><motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 0.8, ease: "linear" }} className="w-4 h-4 border-2 border-background/20 border-t-black rounded-full" /> Processing with Gemini...</>
+                    <><motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 0.8, ease: "linear" }} className="w-4 h-4 border-2 border-background/20 border-t-black rounded-full" /> Analyzing with Gemini...</>
                   ) : submitted ? (
-                    <><CheckCircle2 size={18} /> Analyzed & Logged</>
+                    <><CheckCircle2 size={18} /> Analyzed & Dispatched</>
                   ) : (
-                    <><Send size={16} className="group-hover:translate-x-1 transition-transform" /> Extract & Dispatch</>
+                    <><Eye size={16} className="group-hover:scale-110 transition-transform" /> Analyze & Preview</>
                   )}
                 </button>
               </form>
@@ -457,6 +593,195 @@ function NGODashboardInner() {
           </motion.div>
         </div>
       </div>
+
+      {/* === AI BRIEFING PREVIEW MODAL === */}
+      <AnimatePresence>
+        {previewData && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[9999] flex items-center justify-center p-4"
+            onClick={() => { setPreviewData(null); setSubmitError(""); }}
+          >
+            {/* Backdrop */}
+            <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
+
+            {/* Modal */}
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              transition={{ type: "spring", damping: 25, stiffness: 300 }}
+              onClick={(e) => e.stopPropagation()}
+              className="relative w-full max-w-xl max-h-[85vh] overflow-y-auto rounded-2xl bg-gradient-to-b from-[#18181b] to-[#0f0f12] border border-foreground/[0.1] shadow-2xl"
+            >
+              {/* Header */}
+              <div className="sticky top-0 z-10 flex items-center justify-between p-5 pb-4 border-b border-foreground/[0.08] bg-[#18181b]/95 backdrop-blur-xl rounded-t-2xl">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-indigo-500/20 to-purple-500/20 border border-indigo-500/20 flex items-center justify-center">
+                    <BrainCircuit size={18} className="text-indigo-400" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-sm tracking-tight">AI Briefing Preview</h3>
+                    <p className="text-[10px] text-accent-dim">Review & edit before posting to the incident feed</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => { setPreviewData(null); setSubmitError(""); }}
+                  className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-foreground/10 transition-colors"
+                >
+                  <X size={16} className="text-accent-dim" />
+                </button>
+              </div>
+
+              {/* Confidence Badge */}
+              <div className="px-5 pt-4">
+                <div className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-[11px] font-bold border ${
+                  previewData.ai_verified
+                    ? "bg-green-500/10 text-green-400 border-green-500/20"
+                    : "bg-amber-500/10 text-amber-400 border-amber-500/20"
+                }`}>
+                  <Sparkles size={12} />
+                  AI Confidence: {previewData.confidence_score}% — {previewData.ai_verified ? "Auto-Verified" : "Needs Review"}
+                </div>
+              </div>
+
+              {/* Editable Fields */}
+              <div className="p-5 space-y-4">
+                {/* Summary */}
+                <div>
+                  <label className="block text-[10px] text-accent-dim font-bold uppercase tracking-widest mb-1.5">Summary</label>
+                  <textarea
+                    value={previewData.summary}
+                    onChange={(e) => setPreviewData({ ...previewData, summary: e.target.value })}
+                    className="w-full px-3 py-2.5 rounded-xl bg-background/50 border border-foreground/[0.1] text-sm text-foreground focus:outline-none focus:border-foreground/30 focus:ring-1 focus:ring-foreground/20 resize-none transition-all h-20 font-mono"
+                  />
+                </div>
+
+                {/* Location + Category row */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[10px] text-accent-dim font-bold uppercase tracking-widest mb-1.5">
+                      <MapPin size={10} className="inline mr-1" />Location
+                    </label>
+                    <input
+                      type="text"
+                      value={previewData.location}
+                      onChange={(e) => setPreviewData({ ...previewData, location: e.target.value })}
+                      className="w-full px-3 py-2.5 rounded-xl bg-background/50 border border-foreground/[0.1] text-sm text-foreground focus:outline-none focus:border-foreground/30 focus:ring-1 focus:ring-foreground/20 transition-all"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-accent-dim font-bold uppercase tracking-widest mb-1.5">Category</label>
+                    <select
+                      value={previewData.category}
+                      onChange={(e) => setPreviewData({ ...previewData, category: e.target.value })}
+                      className="w-full px-3 py-2.5 rounded-xl bg-background/50 border border-foreground/[0.1] text-sm text-foreground focus:outline-none focus:border-foreground/30 focus:ring-1 focus:ring-foreground/20 transition-all appearance-none cursor-pointer"
+                    >
+                      {["Water", "Medical", "Food", "Shelter", "Evacuation", "Infrastructure", "Other"].map(c => (
+                        <option key={c} value={c} className="bg-background">{c}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                {/* Priority + Affected row */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[10px] text-accent-dim font-bold uppercase tracking-widest mb-1.5">
+                      <AlertTriangle size={10} className="inline mr-1" />Priority
+                    </label>
+                    <select
+                      value={previewData.priority}
+                      onChange={(e) => setPreviewData({ ...previewData, priority: e.target.value })}
+                      className="w-full px-3 py-2.5 rounded-xl bg-background/50 border border-foreground/[0.1] text-sm text-foreground focus:outline-none focus:border-foreground/30 focus:ring-1 focus:ring-foreground/20 transition-all appearance-none cursor-pointer"
+                    >
+                      {["CRITICAL", "HIGH", "NORMAL"].map(p => (
+                        <option key={p} value={p} className="bg-background">{p}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-accent-dim font-bold uppercase tracking-widest mb-1.5">
+                      <Users size={10} className="inline mr-1" />Affected
+                    </label>
+                    <input
+                      type="text"
+                      value={previewData.affected_count}
+                      onChange={(e) => setPreviewData({ ...previewData, affected_count: e.target.value })}
+                      className="w-full px-3 py-2.5 rounded-xl bg-background/50 border border-foreground/[0.1] text-sm text-foreground focus:outline-none focus:border-foreground/30 focus:ring-1 focus:ring-foreground/20 transition-all"
+                    />
+                  </div>
+                </div>
+
+                {/* Resource Needed */}
+                <div>
+                  <label className="block text-[10px] text-accent-dim font-bold uppercase tracking-widest mb-1.5">Resource Needed</label>
+                  <input
+                    type="text"
+                    value={previewData.resource_needed}
+                    onChange={(e) => setPreviewData({ ...previewData, resource_needed: e.target.value })}
+                    className="w-full px-3 py-2.5 rounded-xl bg-background/50 border border-foreground/[0.1] text-sm text-foreground focus:outline-none focus:border-foreground/30 focus:ring-1 focus:ring-foreground/20 transition-all"
+                  />
+                </div>
+
+                {/* Recommended Action */}
+                <div>
+                  <label className="block text-[10px] text-accent-dim font-bold uppercase tracking-widest mb-1.5">Recommended Action</label>
+                  <textarea
+                    value={previewData.recommended_action}
+                    onChange={(e) => setPreviewData({ ...previewData, recommended_action: e.target.value })}
+                    className="w-full px-3 py-2.5 rounded-xl bg-background/50 border border-foreground/[0.1] text-sm text-foreground focus:outline-none focus:border-foreground/30 focus:ring-1 focus:ring-foreground/20 resize-none transition-all h-16 font-mono"
+                  />
+                </div>
+
+                {/* Volunteers Needed */}
+                <div>
+                  <label className="block text-[10px] text-accent-dim font-bold uppercase tracking-widest mb-1.5">Volunteers Needed</label>
+                  <input
+                    type="number"
+                    value={previewData.volunteers_needed}
+                    onChange={(e) => setPreviewData({ ...previewData, volunteers_needed: e.target.value })}
+                    className="w-full px-3 py-2.5 rounded-xl bg-background/50 border border-foreground/[0.1] text-sm text-foreground focus:outline-none focus:border-foreground/30 focus:ring-1 focus:ring-foreground/20 transition-all"
+                    min="0"
+                  />
+                </div>
+
+                {/* Error */}
+                {submitError && (
+                  <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-xs text-red-400 flex items-start gap-2">
+                    <XCircle size={14} className="shrink-0 mt-0.5" />
+                    {submitError}
+                  </div>
+                )}
+              </div>
+
+              {/* Footer Actions */}
+              <div className="sticky bottom-0 flex items-center gap-3 p-5 pt-4 border-t border-foreground/[0.08] bg-[#0f0f12]/95 backdrop-blur-xl rounded-b-2xl">
+                <button
+                  onClick={() => { setPreviewData(null); setSubmitError(""); }}
+                  className="flex-1 h-11 rounded-xl border border-foreground/[0.1] text-sm font-medium text-accent-dim hover:text-foreground hover:bg-foreground/[0.05] transition-all flex items-center justify-center gap-2"
+                >
+                  <X size={14} /> Discard
+                </button>
+                <button
+                  onClick={handleConfirmPost}
+                  disabled={isConfirming}
+                  className="flex-[2] h-11 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 text-white font-bold text-sm flex items-center justify-center gap-2 hover:from-indigo-500 hover:to-purple-500 active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-indigo-500/20"
+                >
+                  {isConfirming ? (
+                    <><motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 0.8, ease: "linear" }} className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full" /> Dispatching...</>
+                  ) : (
+                    <><Send size={14} /> Confirm & Dispatch</>
+                  )}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
     </DashboardLayout>
   );
 }
