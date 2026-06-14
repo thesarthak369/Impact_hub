@@ -237,7 +237,7 @@ function NGODashboardInner() {
       
       if (response.ok && aiData.data) {
         // Show the editable preview modal
-        setPreviewData({ ...aiData.data, credits_reward: 2 }); // Default 2 credits
+        setPreviewData(aiData.data);
       } else {
         setSubmitError(aiData.error || aiData.details || "AI processing failed. Please try again.");
       }
@@ -616,6 +616,11 @@ function NGODashboardInner() {
                               {need.missions?.filter((m: any) => m.status !== 'Completed').length || 0} / {need.volunteers_needed} Volunteers
                             </span>
                           )}
+                          {need.credits_reward > 0 && (
+                            <span className="px-2 py-1 rounded-md bg-indigo-500/10 border border-indigo-500/20 text-[10px] font-bold text-indigo-400 flex items-center gap-1">
+                              <Sparkles size={10} /> {need.credits_reward} Credits
+                            </span>
+                          )}
                         </div>
                         {/* Deployed Volunteers */}
                         {need.missions && need.missions.filter((m: any) => m.status !== 'Completed').length > 0 && (
@@ -874,12 +879,12 @@ function NGODashboardInner() {
                     />
                   </div>
                   <div>
-                    <label className="block text-[10px] text-accent-dim font-bold uppercase tracking-widest mb-1.5">Credits per Vol. (₹100/cr)</label>
+                    <label className="block text-[10px] text-indigo-400 font-bold uppercase tracking-widest mb-1.5 flex items-center gap-1"><Sparkles size={10}/> AI Suggested Credits (per Vol)</label>
                     <input
                       type="number"
                       value={previewData.credits_reward || 0}
                       onChange={(e) => setPreviewData({ ...previewData, credits_reward: Number(e.target.value) })}
-                      className="w-full px-3 py-2.5 rounded-xl bg-background/50 border border-foreground/[0.1] text-sm text-indigo-400 font-bold focus:outline-none focus:border-indigo-500/30 focus:ring-1 focus:ring-indigo-500/20 transition-all"
+                      className="w-full px-3 py-2.5 rounded-xl bg-indigo-500/[0.05] border border-indigo-500/30 text-sm text-indigo-400 font-bold focus:outline-none focus:border-indigo-500/50 focus:ring-1 focus:ring-indigo-500/50 transition-all"
                       min="0"
                     />
                   </div>

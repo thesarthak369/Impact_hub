@@ -181,7 +181,7 @@ export default function AIEnginePage() {
                     <span className="text-emerald-400 font-bold">Uploaded to Heatmap</span>
                     <span className="ml-auto px-1.5 py-0.5 rounded text-[9px] font-bold border bg-foreground/10 text-foreground border-foreground/20">⚡ GEMINI</span>
                   </div>
-                  {["location", "resource_needed", "priority", "affected_count", "category", "summary", "recommended_action", "volunteers_needed", "confidence_score"].map(key => (
+                  {["location", "resource_needed", "priority", "affected_count", "category", "summary", "recommended_action", "volunteers_needed", "credits_reward", "confidence_score"].map(key => (
                     nlpResult[key] !== undefined && (
                       <div key={key} className="flex justify-between border-b border-foreground/[0.04] pb-1.5 gap-4">
                         <span className="text-accent-dim capitalize shrink-0">{key.replace(/_/g, " ")}:</span>

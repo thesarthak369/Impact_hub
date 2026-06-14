@@ -98,7 +98,7 @@ export default function UserReportPage() {
       const aiData = await response.json();
       
       if (response.ok && aiData.data) {
-        setPreviewData({ ...aiData.data, credits_reward: 2 });
+        setPreviewData(aiData.data);
       } else {
         setSubmitError(aiData.error || aiData.details || "AI processing failed. Please try again.");
       }
@@ -126,10 +126,7 @@ export default function UserReportPage() {
         },
         body: JSON.stringify({ 
           text: reportText, 
-          edited_data: {
-            ...previewData,
-            credits_reward: 0
-          },
+          edited_data: previewData,
           client_lat: clientLocation?.lat,
           client_lng: clientLocation?.lng
         })
@@ -357,9 +354,15 @@ export default function UserReportPage() {
                   <label className="block text-[10px] text-accent-dim font-bold uppercase mb-1">Recommended Action</label>
                   <textarea value={previewData.recommended_action} onChange={(e) => setPreviewData({ ...previewData, recommended_action: e.target.value })} className="w-full px-3 py-2 rounded-xl bg-foreground/[0.02] border border-foreground/10 text-sm h-16 resize-none font-mono" />
                 </div>
-                <div className="mt-3">
-                  <label className="block text-[10px] text-accent-dim font-bold uppercase mb-1">Volunteers Needed</label>
-                  <input type="number" value={previewData.volunteers_needed} onChange={(e) => setPreviewData({ ...previewData, volunteers_needed: e.target.value })} className="w-full px-3 py-2 rounded-xl bg-foreground/[0.02] border border-foreground/10 text-sm" />
+                <div className="mt-3 grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[10px] text-accent-dim font-bold uppercase mb-1">Volunteers Needed</label>
+                    <input type="number" value={previewData.volunteers_needed} onChange={(e) => setPreviewData({ ...previewData, volunteers_needed: e.target.value })} className="w-full px-3 py-2 rounded-xl bg-foreground/[0.02] border border-foreground/10 text-sm" />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-indigo-400 font-bold uppercase mb-1 flex items-center gap-1"><Sparkles size={10}/> AI Suggested Credits</label>
+                    <input type="number" min="0" max="100" value={previewData.credits_reward || 0} onChange={(e) => setPreviewData({ ...previewData, credits_reward: parseInt(e.target.value) || 0 })} className="w-full px-3 py-2 rounded-xl bg-indigo-500/[0.05] border border-indigo-500/30 text-sm font-bold text-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-500/50" />
+                  </div>
                 </div>
 
                 {submitError && <div className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 p-2 rounded flex items-center gap-1"><XCircle size={14}/>{submitError}</div>}

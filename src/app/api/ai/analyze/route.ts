@@ -60,6 +60,10 @@ const analyzeSchema: Schema = {
       type: SchemaType.STRING,
       description: "A number representing how many volunteers are needed based on severity (e.g., 5, 10, 50)"
     },
+    credits_reward: {
+      type: SchemaType.INTEGER,
+      description: "AI suggested credits reward (1-10) to offer volunteers based on danger/effort. E.g. Normal=1-2, High=3-5, Critical=5-10"
+    },
     confidence_score: {
       type: SchemaType.INTEGER,
       description: "A number 0-100 representing extraction confidence"
@@ -78,6 +82,7 @@ const analyzeSchema: Schema = {
     "summary",
     "recommended_action",
     "volunteers_needed",
+    "credits_reward",
     "confidence_score"
   ]
 };
@@ -217,6 +222,7 @@ Return ONLY valid JSON (no markdown, no code fences) with these fields:
   "summary": "one-line summary of the situation",
   "recommended_action": "what action should be taken immediately",
   "volunteers_needed": "a number representing how many volunteers are needed based on severity (e.g., 5, 10, 50)",
+  "credits_reward": an integer 1-10 suggesting how many credits to offer per volunteer (Normal=1-2, High=3-5, Critical=6-10),
   "confidence_score": a number 0-100 representing extraction confidence
 }`;
 
@@ -288,6 +294,7 @@ Return ONLY valid JSON (no markdown, no code fences) with these fields:
             recommended_action: parsed.recommended_action || "",
             resource_needed: parsed.resource_needed || "",
             volunteers_needed: parsed.volunteers_needed || "0",
+            credits_reward: parsed.credits_reward || 2,
             confidence_score: confidenceScore,
             ai_verified: isHighConfidence,
           }
@@ -502,6 +509,7 @@ Only include volunteers with score >= 50. Use the EXACT id values provided.`;
                     title: `🧠 AI Match: ${parsed.category} in ${parsed.location}`,
                     body: `${ngoName} reported a ${parsed.priority} incident. AI matched you (score: ${m.score}/100). ${m.reason}. Tap to review and accept.${reporterMobile ? ` Contact: ${reporterMobile}` : ""}`,
                     read: false,
+                    incident_id: incidentId,
                     created_at: new Date().toISOString()
                   });
                 });

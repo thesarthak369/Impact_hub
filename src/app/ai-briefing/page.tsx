@@ -114,6 +114,15 @@ export default function AIEngineBriefingPage() {
     setMatchedMissions(prev => prev.map(m => m.id === missionId ? { ...m, status: 'Completed' } : m));
   };
 
+  const dismissSuggestion = async (id: string) => {
+    try {
+      await updateDoc(doc(db, "notifications", id), { read: true });
+      setAiSuggestions(prev => prev.filter(s => s.id !== id));
+    } catch (error) {
+      console.error("Error dismissing suggestion:", error);
+    }
+  };
+
   const getTimeAgo = (dateString: string) => {
     const date = new Date(dateString);
     const now = new Date();
@@ -200,17 +209,22 @@ export default function AIEngineBriefingPage() {
             </h2>
             <div className="space-y-2">
               {aiSuggestions.map((sug, i) => (
-                <motion.div key={sug.id} initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.2 + i * 0.04 }}
-                  className="p-3.5 rounded-xl bg-foreground/[0.02] border border-foreground/[0.06] flex items-start gap-3">
-                  <div className="w-8 h-8 rounded-lg bg-indigo-500/15 flex items-center justify-center shrink-0 mt-0.5">
-                    <BrainCircuit size={14} className="text-indigo-400" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="text-sm font-semibold text-foreground mb-0.5">{sug.title}</div>
-                    <p className="text-xs text-accent-dim leading-relaxed line-clamp-2">{sug.body}</p>
-                    <div className="text-[10px] text-accent-dim mt-1">{getTimeAgo(sug.created_at)}</div>
-                  </div>
-                </motion.div>
+                <Link key={sug.id} href="/volunteer-dashboard" onClick={() => dismissSuggestion(sug.id)}>
+                  <motion.div initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.2 + i * 0.04 }}
+                    className="p-3.5 rounded-xl bg-foreground/[0.02] border border-foreground/[0.06] flex items-start gap-3 cursor-pointer hover:bg-foreground/[0.04] transition-all group">
+                    <div className="w-8 h-8 rounded-lg bg-indigo-500/15 flex items-center justify-center shrink-0 mt-0.5 group-hover:scale-110 transition-transform">
+                      <BrainCircuit size={14} className="text-indigo-400" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-semibold text-foreground mb-0.5">{sug.title}</div>
+                      <p className="text-xs text-accent-dim leading-relaxed line-clamp-2">{sug.body}</p>
+                      <div className="text-[10px] text-accent-dim mt-1 flex items-center gap-2">
+                        {getTimeAgo(sug.created_at)}
+                        <span className="text-indigo-400 font-bold tracking-wider uppercase">Tap to Review ⚡</span>
+                      </div>
+                    </div>
+                  </motion.div>
+                </Link>
               ))}
             </div>
           </motion.div>

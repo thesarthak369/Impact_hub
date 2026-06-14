@@ -22,6 +22,7 @@ interface Incident {
   created_at: string;
   created_by: string | null;
   volunteers_needed: number;
+  credits_reward?: number;
   missions?: any[];
 }
 
@@ -41,7 +42,8 @@ function NGOPostsInner() {
     priority: "",
     affected: "",
     description: "",
-    volunteers_needed: 0
+    volunteers_needed: 0,
+    credits_reward: 0
   });
   const [isSavingEdit, setIsSavingEdit] = useState(false);
   const [editError, setEditError] = useState("");
@@ -176,7 +178,8 @@ function NGOPostsInner() {
       priority: incident.priority || "NORMAL",
       affected: incident.affected || "Unknown",
       description: incident.description || "",
-      volunteers_needed: incident.volunteers_needed || 0
+      volunteers_needed: incident.volunteers_needed || 0,
+      credits_reward: incident.credits_reward || 0
     });
     setEditError("");
   };
@@ -201,7 +204,8 @@ function NGOPostsInner() {
         priority: editForm.priority,
         affected: editForm.affected,
         description: editForm.description,
-        volunteers_needed: Number(editForm.volunteers_needed) || 0
+        volunteers_needed: Number(editForm.volunteers_needed) || 0,
+        credits_reward: Number(editForm.credits_reward) || 0
       });
       
       setEditingIncident(null);
@@ -346,6 +350,11 @@ function NGOPostsInner() {
                             : 'bg-green-500/10 text-green-400 border-green-500/20'
                         }`}>
                           {activeMissionsCount} / {inc.volunteers_needed} volunteers assigned
+                        </span>
+                      )}
+                      {inc.credits_reward !== undefined && inc.credits_reward > 0 && (
+                        <span className="px-2 py-0.5 rounded bg-indigo-500/10 border border-indigo-500/20 font-bold text-indigo-400 flex items-center gap-1 shrink-0 ml-2">
+                          <Sparkles size={10} /> {inc.credits_reward} Credits
                         </span>
                       )}
                     </div>
@@ -623,16 +632,28 @@ function NGOPostsInner() {
                   </div>
                 </div>
 
-                {/* Volunteers Needed */}
-                <div>
-                  <label className="block text-[10px] text-accent-dim font-bold uppercase tracking-widest mb-1.5">Volunteers Needed</label>
-                  <input
-                    type="number"
-                    value={editForm.volunteers_needed}
-                    onChange={(e) => setEditForm({ ...editForm, volunteers_needed: parseInt(e.target.value) || 0 })}
-                    className="w-full px-3 py-2.5 rounded-xl bg-background/50 border border-foreground/[0.1] text-sm text-foreground focus:outline-none focus:border-foreground/30 focus:ring-1 focus:ring-foreground/20 transition-all"
-                    min="0"
-                  />
+                {/* Volunteers Needed & Credits Reward */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[10px] text-accent-dim font-bold uppercase tracking-widest mb-1.5">Volunteers Needed</label>
+                    <input
+                      type="number"
+                      value={editForm.volunteers_needed}
+                      onChange={(e) => setEditForm({ ...editForm, volunteers_needed: parseInt(e.target.value) || 0 })}
+                      className="w-full px-3 py-2.5 rounded-xl bg-background/50 border border-foreground/[0.1] text-sm text-foreground focus:outline-none focus:border-foreground/30 focus:ring-1 focus:ring-foreground/20 transition-all"
+                      min="0"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-indigo-400 font-bold uppercase tracking-widest mb-1.5 flex items-center gap-1"><Sparkles size={10}/> AI Suggested Credits</label>
+                    <input
+                      type="number"
+                      value={editForm.credits_reward || 0}
+                      onChange={(e) => setEditForm({ ...editForm, credits_reward: parseInt(e.target.value) || 0 })}
+                      className="w-full px-3 py-2.5 rounded-xl bg-indigo-500/[0.05] border border-indigo-500/30 text-sm text-indigo-400 font-bold focus:outline-none focus:border-indigo-500/50 focus:ring-1 focus:ring-indigo-500/50 transition-all"
+                      min="0"
+                    />
+                  </div>
                 </div>
 
                 {/* Error Banner */}

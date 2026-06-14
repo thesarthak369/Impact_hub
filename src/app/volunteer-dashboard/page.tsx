@@ -525,16 +525,25 @@ function VolunteerDashboardInner() {
               </h3>
               {aiSuggestions.map((sug, i) => (
                 <motion.div key={sug.id} initial={{ opacity: 0, x: -15 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.05 }}
-                  className="p-4 rounded-xl bg-indigo-500/[0.04] border border-indigo-500/15 flex items-start gap-3">
-                  <div className="w-9 h-9 rounded-lg bg-indigo-500/15 flex items-center justify-center shrink-0 mt-0.5">
+                  onClick={() => {
+                    if (sug.incident_id) {
+                      handleDeployClick(sug.incident_id);
+                      dismissSuggestion(sug.id);
+                    }
+                  }}
+                  className="p-4 rounded-xl bg-indigo-500/[0.04] border border-indigo-500/15 flex items-start gap-3 cursor-pointer hover:bg-indigo-500/[0.08] hover:border-indigo-500/30 transition-all group">
+                  <div className="w-9 h-9 rounded-lg bg-indigo-500/15 flex items-center justify-center shrink-0 mt-0.5 group-hover:scale-110 transition-transform">
                     <BrainCircuit size={16} className="text-indigo-400" />
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="text-sm font-semibold text-foreground mb-0.5">{sug.title}</div>
                     <p className="text-xs text-accent-dim leading-relaxed line-clamp-2">{sug.body}</p>
-                    <div className="text-[10px] text-accent-dim mt-1">{getTimeAgo(sug.created_at)}</div>
+                    <div className="text-[10px] text-accent-dim mt-1 flex items-center gap-2">
+                      {getTimeAgo(sug.created_at)}
+                      {sug.incident_id && <span className="text-indigo-400 font-bold tracking-wider uppercase">Tap to Review ⚡</span>}
+                    </div>
                   </div>
-                  <button onClick={() => dismissSuggestion(sug.id)}
+                  <button onClick={(e) => { e.stopPropagation(); dismissSuggestion(sug.id); }}
                     className="shrink-0 text-accent-dim hover:text-foreground p-1 rounded hover:bg-foreground/[0.04] transition-colors" title="Dismiss">
                     <X size={14} />
                   </button>
