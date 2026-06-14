@@ -83,7 +83,7 @@ export default function LoginPage() {
           {/* <div className="mt-8 text-center border-t border-foreground/[0.08] pt-6">
             <p className="text-xs text-accent-dim">
               <Shield size={12} className="inline mr-1.5 -mt-0.5" />
-              Secure authentication via Supabase
+              Secure authentication via Firebase
             </p>
           </div> */}
         </motion.div>
