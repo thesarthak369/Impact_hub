@@ -126,22 +126,33 @@ graph TD
 ```mermaid
 flowchart LR
     subgraph Victim [Citizen in Distress]
-        A[Offline SMS] --> C
-        B[Mobile App SOS] --> C
+        A[Offline SMS]
+        B[Mobile App SOS]
     end
 
     subgraph System [Impact Hub Engine]
-        C[AI Analysis Pipeline] --> D{Confidence > 85%?}
-        D -->|Yes| E[Auto-Verified & Active]
-        D -->|No| F[Pending Review]
-        F -->|NGO Admin Verifies| E
+        C[AI Analysis Pipeline]
+        D{Confidence > 85%?}
+        E[Auto-Verified & Active]
+        F[Pending Review]
     end
 
     subgraph Response [Ground Action]
-        E --> G[Smart Volunteer Match]
-        G --> H[Push Alert to Volunteer]
-        H --> I[Navigate & Resolve]
+        G[Smart Volunteer Match]
+        H[Push Alert to Volunteer]
+        I[Navigate & Resolve]
     end
+
+    %% Connections
+    A --> C
+    B --> C
+    C --> D
+    D -->|Yes| E
+    D -->|No| F
+    F -->|NGO Admin Verifies| E
+    E --> G
+    G --> H
+    H --> I
     
     style Victim fill:#0d0d0d,stroke:#444,color:#fff
     style System fill:#0d0d0d,stroke:#444,color:#fff
