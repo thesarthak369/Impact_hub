@@ -159,7 +159,7 @@ export default function MobileAppSection() {
           >
             <MagneticButton>
               <a 
-                href="#" 
+                href="https://drive.google.com/drive/folders/1JvNGAJzYF0ID3VmJe50Cm3O4jygEtaEs" 
                 className="group relative inline-flex items-center gap-3 px-8 py-4 rounded-full border border-foreground/20 bg-foreground/5 backdrop-blur-md text-foreground font-semibold transition-all duration-500 hover:bg-foreground hover:text-background hover:border-foreground hover:shadow-[0_0_30px_var(--glow-color)] active:scale-[0.97] overflow-hidden"
               >
                 <div className="absolute inset-0 rounded-full bg-gradient-to-r from-foreground/0 via-foreground/20 to-foreground/0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 blur-md" />
